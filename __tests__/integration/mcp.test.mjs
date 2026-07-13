@@ -190,7 +190,7 @@ after(() => {
   rmSync(workspaceRoot, { recursive: true, force: true });
 });
 
-test("should advertise only the seven intended bridge tools", async () => {
+test("should advertise only the eight intended bridge tools", async () => {
   const response = await rpc("tools/list");
 
   assert.deepEqual(
@@ -202,6 +202,7 @@ test("should advertise only the seven intended bridge tools", async () => {
       "design_list_files",
       "design_get_file",
       "design_pull",
+      "design_snapshot_status",
       "design_doctor",
     ],
   );
@@ -214,6 +215,64 @@ test("should advertise the hard pull path limit", async () => {
   );
 
   assert.equal(pullTool.inputSchema.properties.paths.maxItems, 12);
+});
+
+test("should advertise accurate operation risk annotations", async () => {
+  const response = await rpc("tools/list");
+  const annotations = Object.fromEntries(
+    response.result.tools.map((tool) => [tool.name, tool.annotations]),
+  );
+
+  assert.deepEqual(annotations, {
+    design_list_projects: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    design_resolve_link: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    design_get_project: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    design_list_files: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    design_get_file: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    design_pull: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+    design_snapshot_status: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    design_doctor: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+  });
 });
 
 test("should report malformed JSON as a JSON-RPC parse error", async () => {
@@ -243,6 +302,15 @@ test("should reject an unknown tool as invalid params", async () => {
   assert.equal(response.error.code, -32602);
 });
 
+test("should reject undeclared tool arguments as invalid params", async () => {
+  const response = await rpc("tools/call", {
+    name: "design_list_projects",
+    arguments: { projectId: "smuggled-project" },
+  });
+
+  assert.equal(response.error.code, -32602);
+});
+
 test("should return project metadata", async () => {
   const result = await callTool("design_get_project", {
     projectId: "mock-pid-1",
@@ -267,6 +335,18 @@ test("should keep local cache paths out of doctor results", async () => {
   const result = await callTool("design_doctor");
 
   assert.equal(Object.hasOwn(result.data, "cacheDir"), false);
+});
+
+test("should report only safe read-only source capabilities", async () => {
+  const result = await callTool("design_doctor");
+
+  assert.deepEqual(result.data.source, {
+    id: "claude-code-designsync",
+    transport: "claude-cli",
+    readOnly: true,
+    revisions: false,
+    remoteChecksums: false,
+  });
 });
 
 test("should resolve a linked file query without delegation", async () => {
@@ -499,7 +579,395 @@ test("should write a provenance manifest", () => {
     readFileSync(path.join(pullDirectory, ".claude-design.json"), "utf8"),
   );
 
-  assert.equal(manifest.files.length, 2);
+  assert.deepEqual(
+    {
+      schemaVersion: manifest.schemaVersion,
+      source: manifest.source,
+      files: manifest.files.length,
+      perFileTimestamps: manifest.files.every(
+        (entry) => typeof entry.pulledAt === "string",
+      ),
+    },
+    {
+      schemaVersion: 2,
+      source: {
+        id: "claude-code-designsync",
+        transport: "claude-cli",
+        readOnly: true,
+      },
+      files: 2,
+      perFileTimestamps: true,
+    },
+  );
+});
+
+test("should report a clean managed snapshot without remote access", async () => {
+  const result = await callTool("design_snapshot_status", {
+    projectId: "mock-pid-1",
+    dir: pullDirectory,
+  });
+
+  assert.deepEqual(
+    { state: result.data.state, summary: result.data.summary },
+    {
+      state: "clean",
+      summary: { clean: 2, modified: 0, missing: 0, untracked: 0 },
+    },
+  );
+});
+
+test("should report a modified managed snapshot file", async () => {
+  const buttonPath = path.join(pullDirectory, "components", "button.html");
+  writeFileSync(buttonPath, "locally changed");
+  try {
+    const result = await callTool("design_snapshot_status", {
+      projectId: "mock-pid-1",
+      dir: pullDirectory,
+    });
+
+    assert.deepEqual(
+      {
+        state: result.data.state,
+        modified: result.data.summary.modified,
+        status: result.data.files.find(
+          (entry) => entry.path === "components/button.html",
+        )?.status,
+      },
+      { state: "dirty", modified: 1, status: "modified" },
+    );
+  } finally {
+    writeFileSync(buttonPath, '<button class="btn">Hi</button>');
+  }
+});
+
+test("should report a missing managed snapshot file", async () => {
+  const buttonPath = path.join(pullDirectory, "components", "button.html");
+  rmSync(buttonPath);
+  try {
+    const result = await callTool("design_snapshot_status", {
+      projectId: "mock-pid-1",
+      dir: pullDirectory,
+    });
+
+    assert.deepEqual(
+      {
+        state: result.data.state,
+        missing: result.data.summary.missing,
+        status: result.data.files.find(
+          (entry) => entry.path === "components/button.html",
+        )?.status,
+      },
+      { state: "dirty", missing: 1, status: "missing" },
+    );
+  } finally {
+    writeFileSync(buttonPath, '<button class="btn">Hi</button>');
+  }
+});
+
+test("should report an untracked snapshot file", async () => {
+  const untrackedPath = path.join(pullDirectory, "notes.txt");
+  writeFileSync(untrackedPath, "local notes");
+  try {
+    const result = await callTool("design_snapshot_status", {
+      projectId: "mock-pid-1",
+      dir: pullDirectory,
+    });
+
+    assert.deepEqual(
+      {
+        state: result.data.state,
+        untracked: result.data.summary.untracked,
+        paths: result.data.untracked,
+      },
+      { state: "dirty", untracked: 1, paths: ["notes.txt"] },
+    );
+  } finally {
+    rmSync(untrackedPath, { force: true });
+  }
+});
+
+test("should enforce the snapshot status entry limit", async () => {
+  const result = await callTool("design_snapshot_status", {
+    projectId: "mock-pid-1",
+    dir: pullDirectory,
+    maxEntries: 1,
+  });
+
+  assert.equal(result.data.error, "STATUS_LIMIT_EXCEEDED");
+});
+
+test("should reject invalid snapshot status entry limits", async () => {
+  const result = await callTool("design_snapshot_status", {
+    projectId: "mock-pid-1",
+    dir: pullDirectory,
+    maxEntries: 0,
+  });
+
+  assert.equal(result.data.error, "BAD_MAX_ENTRIES");
+});
+
+test("should not create a missing snapshot during status inspection", async () => {
+  const projectId = "status-missing-directory";
+  const directory = path.join(
+    workspaceRoot,
+    ".design",
+    "claude",
+    projectId,
+  );
+  const result = await callTool("design_snapshot_status", {
+    projectId,
+    dir: directory,
+  });
+
+  assert.deepEqual(
+    { error: result.data.error, directoryExists: existsSync(directory) },
+    { error: "SNAPSHOT_NOT_FOUND", directoryExists: false },
+  );
+});
+
+test("should reject a snapshot without a manifest", async () => {
+  const projectId = "status-missing-manifest";
+  const directory = path.join(
+    workspaceRoot,
+    ".design",
+    "claude",
+    projectId,
+  );
+  mkdirSync(directory, { recursive: true });
+  const result = await callTool("design_snapshot_status", {
+    projectId,
+    dir: directory,
+  });
+
+  assert.equal(result.data.error, "MANIFEST_NOT_FOUND");
+});
+
+test("should reject an invalid status manifest", async () => {
+  const projectId = "status-invalid-manifest";
+  const directory = path.join(
+    workspaceRoot,
+    ".design",
+    "claude",
+    projectId,
+  );
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(path.join(directory, ".claude-design.json"), "not-json\n");
+  const result = await callTool("design_snapshot_status", {
+    projectId,
+    dir: directory,
+  });
+
+  assert.equal(result.data.error, "MANIFEST_INVALID");
+});
+
+test("should reject a calendar-invalid provenance timestamp", async () => {
+  const manifestPath = path.join(pullDirectory, ".claude-design.json");
+  const original = readFileSync(manifestPath, "utf8");
+  const manifest = JSON.parse(original);
+  manifest.updatedAt = "2026-02-31T00:00:00.000Z";
+  writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`);
+  try {
+    const result = await callTool("design_snapshot_status", {
+      projectId: "mock-pid-1",
+      dir: pullDirectory,
+    });
+
+    assert.equal(result.data.error, "MANIFEST_INVALID");
+  } finally {
+    writeFileSync(manifestPath, original);
+  }
+});
+
+test("should inspect v1 manifests without rewriting and migrate after pull", async () => {
+  const projectId = "manifest-v1-migration";
+  const directory = path.join(
+    workspaceRoot,
+    ".design",
+    "claude",
+    projectId,
+  );
+  const content = '<button class="btn">Hi</button>';
+  const bytes = Buffer.from(content);
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const oldPulledAt = "2026-01-01T00:00:00.000Z";
+  const manifestPath = path.join(directory, ".claude-design.json");
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(path.join(directory, "one.html"), bytes);
+  writeFileSync(path.join(directory, "two.html"), bytes);
+  const versionOne = `${JSON.stringify(
+    {
+      schemaVersion: 1,
+      projectId,
+      projectUrl: `https://claude.ai/design/p/${projectId}`,
+      pulledAt: oldPulledAt,
+      files: ["one.html", "two.html"].map((filePath) => ({
+        path: filePath,
+        bytes: bytes.length,
+        sha256: digest,
+        contentType: "text/html",
+        binary: false,
+      })),
+    },
+    null,
+    2,
+  )}\n`;
+  writeFileSync(manifestPath, versionOne);
+
+  const status = await callTool("design_snapshot_status", {
+    projectId,
+    dir: directory,
+  });
+  const unchangedAfterStatus = readFileSync(manifestPath, "utf8");
+  const pullResult = await callTool("design_pull", {
+    projectId,
+    dir: directory,
+    paths: ["one.html"],
+  });
+  const migrated = JSON.parse(readFileSync(manifestPath, "utf8"));
+
+  assert.deepEqual(
+    {
+      statusError: status.isError,
+      reportedVersion: status.data.manifestSchemaVersion,
+      statusRewroteManifest: unchangedAfterStatus !== versionOne,
+      pullError: pullResult.isError,
+      schemaVersion: migrated.schemaVersion,
+      source: migrated.source,
+      updatedTimestampChanged: migrated.files.find(
+        (entry) => entry.path === "one.html",
+      )?.pulledAt !== oldPulledAt,
+      untouchedTimestamp: migrated.files.find(
+        (entry) => entry.path === "two.html",
+      )?.pulledAt,
+    },
+    {
+      statusError: false,
+      reportedVersion: 1,
+      statusRewroteManifest: false,
+      pullError: false,
+      schemaVersion: 2,
+      source: {
+        id: "claude-code-designsync",
+        transport: "claude-cli",
+        readOnly: true,
+      },
+      updatedTimestampChanged: true,
+      untouchedTimestamp: oldPulledAt,
+    },
+  );
+});
+
+test("should reject links found inside a managed snapshot", async () => {
+  const projectId = "status-linked-entry";
+  const directory = path.join(
+    workspaceRoot,
+    ".design",
+    "claude",
+    projectId,
+  );
+  const pulled = await callTool("design_pull", {
+    projectId,
+    dir: directory,
+    paths: ["screen.html"],
+  });
+  const target = path.join(workspaceRoot, "status-link-target");
+  mkdirSync(target, { recursive: true });
+  symlinkSync(
+    target,
+    path.join(directory, "linked"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+
+  const result = await callTool("design_snapshot_status", {
+    projectId,
+    dir: directory,
+  });
+
+  assert.deepEqual(
+    { pullError: pulled.isError, statusError: result.data.error },
+    { pullError: false, statusError: "SYMLINK_ESCAPE" },
+  );
+});
+
+test("should reject status outside MCP workspace roots", async () => {
+  const projectId = "status-outside-root";
+  const directory = path.resolve(
+    workspaceRoot,
+    "..",
+    ".design",
+    "claude",
+    projectId,
+  );
+  const result = await callTool("design_snapshot_status", {
+    projectId,
+    dir: directory,
+  });
+
+  assert.equal(result.data.error, "DIR_OUTSIDE_WORKSPACE");
+});
+
+test("should reject status while another process owns the snapshot lock", async () => {
+  const lockPath = path.join(pullDirectory, ".claude-design.lock");
+  writeFileSync(lockPath, "external lock", { flag: "wx" });
+  try {
+    const result = await callTool("design_snapshot_status", {
+      projectId: "mock-pid-1",
+      dir: pullDirectory,
+    });
+
+    assert.deepEqual(
+      { error: result.data.error, lockExists: existsSync(lockPath) },
+      { error: "SNAPSHOT_BUSY", lockExists: true },
+    );
+  } finally {
+    rmSync(lockPath, { force: true });
+  }
+});
+
+test("should reject portable local path collisions during status", async () => {
+  const projectId = "status-case-collision";
+  const directory = path.join(
+    workspaceRoot,
+    ".design",
+    "claude",
+    projectId,
+  );
+  const content = Buffer.from("collision");
+  const digest = createHash("sha256").update(content).digest("hex");
+  const timestamp = "2026-01-01T00:00:00.000Z";
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(path.join(directory, "SCREEN.HTML"), content);
+  writeFileSync(
+    path.join(directory, ".claude-design.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      projectId,
+      projectUrl: `https://claude.ai/design/p/${projectId}`,
+      updatedAt: timestamp,
+      source: {
+        id: "claude-code-designsync",
+        transport: "claude-cli",
+        readOnly: true,
+      },
+      files: [
+        {
+          path: "screen.html",
+          bytes: content.length,
+          sha256: digest,
+          contentType: "text/html",
+          binary: false,
+          pulledAt: timestamp,
+        },
+      ],
+    })}\n`,
+  );
+
+  const result = await callTool("design_snapshot_status", {
+    projectId,
+    dir: directory,
+  });
+
+  assert.equal(result.data.error, "PATH_COLLISION");
 });
 
 test("should reject pulls outside MCP workspace roots", async () => {

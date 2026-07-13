@@ -2,7 +2,7 @@
 <h1 align="center">
   <br>
   <a href="https://www.stackd-solutions.io"><img src="https://raw.githubusercontent.com/StackD-Solutions/claude-design-bridge/main/docs/logo.svg" alt="StackD Solutions" width="250"></a>
-  <br>Claude Design Bridge
+  <br>Claude Design Bridge for Codex
   <br>
 </h1>
 
@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/MCP-server-8A2BE2" alt="MCP Server">
 </p>
 
-A [Codex](https://developers.openai.com/codex) plugin that lets you use your [Claude Design](https://claude.ai/design) projects directly from ordinary prompts. It reads the latest selected files through your authenticated [Claude Code](https://claude.com/claude-code), computes SHA-256 provenance, validates cached and written bytes, and writes a reviewable local snapshot — so the implementation follows the real design source rather than a screenshot or a re-typed approximation.
+**Claude Design Bridge for Codex** is a read-only [Codex](https://developers.openai.com/codex) plugin for fetching official [Claude Design](https://claude.ai/design) source through your authenticated [Claude Code](https://claude.com/claude-code). It computes SHA-256 provenance, validates cached and written bytes, and writes a reviewable local snapshot — so the implementation follows the real design source rather than a screenshot or a re-typed approximation.
 
 ```text
 "Fetch https://claude.ai/design/p/<id>?file=Settings.dc.html and implement it here."
@@ -29,6 +29,7 @@ No slash command, tool name, browser export, or separate Codex authentication is
 - Implicit activation from plain prompts — no slash command or tool name to remember
 - Integrity-tagged reads: SHA-256, byte length, and content type recorded for every file
 - Local snapshots at `<workspace>/.design/claude/<projectId>` with a provenance manifest
+- Local-only drift status for clean, modified, missing, and untracked snapshot files
 - Binary assets preserved as bytes, never reconstructed from base64 text or screenshots
 - Truncated reads rejected rather than silently replaced with generated content
 - Read-only remote access — no design write, finalize, delete, or asset-registration tools
@@ -36,7 +37,7 @@ No slash command, tool name, browser export, or separate Codex authentication is
 
 ## Why this bridge exists
 
-Claude Design is not a documented public API with a standalone OAuth flow that Codex can adopt. Authentication, project consent, service discovery, and the DesignSync tool belong to Claude Code. This plugin keeps that boundary intact:
+Anthropic documents the Claude Design remote MCP endpoint for Claude Code, including a Claude Code-specific `/design-login` flow. It does not currently document a standalone OAuth flow for Codex, stable Design tool schemas, or a raw file-result contract that this bridge can validate independently. Authentication, project consent, service discovery, and the current DesignSync tool therefore remain owned by Claude Code. This plugin keeps that boundary intact:
 
 ```text
 Codex prompt
@@ -50,6 +51,14 @@ Codex prompt
 ```
 
 The bridge does not call Anthropic's private design endpoint, read OAuth credential files, bundle Claude Code, or copy leaked/proprietary Claude source.
+
+### Official upstream status
+
+Last verified: **2026-07-13**.
+
+Anthropic's [Claude Design guide](https://support.claude.com/en/articles/14604416-get-started-with-claude-design) now documents `https://api.anthropic.com/v1/design/mcp` for Claude Code and directs users to authenticate with `/design-login`. An earlier [Claude Code issue](https://github.com/anthropics/claude-code/issues/69310) recorded 404 responses after that login flow. The endpoint is now a known first-party migration path, but the bridge will adopt it only after Anthropic documents supported non-Claude-client OAuth and tool/result schemas and same-project byte-parity tests pass.
+
+The bridge never scrapes Claude Code credential files, replays proprietary tokens, or guesses unpublished methods. See [the architecture and transport decision](docs/architecture.md) for the adoption gate and security invariants.
 
 ## Prerequisites
 
@@ -68,6 +77,9 @@ Run these once in interactive Claude Code:
 `/design consent` is needed only when Claude asks for agent access. Older Claude Code versions use `/design-login` for the login command.
 
 ## Installation
+
+The canonical repository identifier is
+[`StackD-Solutions/claude-design-bridge`](https://github.com/StackD-Solutions/claude-design-bridge).
 
 ```powershell
 git clone https://github.com/StackD-Solutions/claude-design-bridge.git
@@ -98,6 +110,7 @@ The plugin works with no configuration. Every setting below is an optional envir
 | `DESIGN_BRIDGE_MAX_PULL_BYTES`           | `number` | `33554432`                                                     | Total bytes allowed in one pull                       |
 | `DESIGN_BRIDGE_PULL_CONCURRENCY`         | `number` | `3`                                                            | Maximum parallel reads within one pull                |
 | `DESIGN_BRIDGE_MAX_CONCURRENT_DELEGATES` | `number` | `4`                                                            | Maximum Claude subprocess reads across calls          |
+| `DESIGN_BRIDGE_MAX_STATUS_ENTRIES`       | `number` | `1024`                                                         | Maximum local entries inspected by snapshot status    |
 | `DESIGN_BRIDGE_ALLOWED_ROOTS`            | `string` | Unset                                                          | Root override; invalid entries fail closed            |
 
 ## Tools
@@ -111,6 +124,7 @@ The plugin works with no configuration. Every setting below is an optional envir
 | `design_list_files`    | List normalized project paths                                       |
 | `design_get_file`      | Fetch/hash the latest file; inline only small text                  |
 | `design_pull`          | Refresh selected files and maintain a SHA-256 provenance snapshot   |
+| `design_snapshot_status` | Compare an existing snapshot with its manifest without remote access |
 
 ### Freshness and Pull Behavior
 
@@ -119,6 +133,16 @@ Files you have not edited locally update in place. Locally edited or untracked f
 `design_pull` reads each selected file from Claude Design by default and computes its SHA-256. Identical files report `unchanged: true`. When a remote file changed and the local snapshot still matches its previous manifest SHA, the bridge atomically updates that same path without creating a sibling copy. A locally edited or untracked differing file is preserved and reported as `FILE_EXISTS`; pass `overwrite: true` only to force its replacement. Omitting `overwrite` and passing `overwrite: false` have the same safe behavior.
 
 Claude DesignSync does not expose a revision ID, ETag, or remote checksum in the validated file contract, so the bridge cannot perform a metadata-only freshness check. It fetches each selected file and compares the resulting SHA-256 with the local manifest instead.
+
+Manifest schema v2 records the source transport, manifest update time, and a separate `pulledAt` timestamp for every file. Selective pulls advance only the entries successfully fetched and written. A deliberate `refresh:false` cache hit preserves the original upstream-fetch timestamp instead of presenting cached bytes as newly read. Existing schema v1 manifests are migrated in memory and rewritten as v2 only after a successful pull.
+
+Upgrading from 0.1.x requires no manual snapshot conversion. Status checks leave schema v1 files
+untouched; the next successful pull migrates them while preserving their prior global `pulledAt`
+as the per-file timestamp for entries that were not refetched. See [CHANGELOG.md](CHANGELOG.md).
+
+`design_snapshot_status` performs no remote call and never creates a missing snapshot. It reads the existing manifest, rejects links and unsafe entries, and reports clean, modified, missing, and untracked paths. Use it when resuming work or before deciding whether an explicit `overwrite:true` is appropriate.
+
+Production pulls use bounded concurrent single-file reads. Version 0.2.0 contains an experimental strict batch matcher, but batching is not exposed or enabled because its live byte-parity and performance gate has not yet been completed. Maintainers can run the explicit, cost-confirmed `npm run benchmark:live -- --help` harness with a private selected sample; the harness redacts project IDs, paths, source, credentials, and hashes from its report. See the [architecture decision](docs/architecture.md#batch-read-gate).
 
 You normally do not need to mention refresh. Ask Codex to "force-refresh this Claude Design" when you explicitly want a new source read. Omitting `refresh` or passing `refresh: true` reads from Claude Design. Passing `refresh: false` explicitly opts into validated TTL-cache reuse, with a remote read on cache miss, expiry, or failed integrity validation. Selected files are freshly fetched whenever they are read or pulled; this is not a background watcher. A multi-file pull is not a server-side revision transaction, so a design edited during the pull can span revisions. Renamed or remotely deleted files are not automatically removed from the local snapshot. Each pull accepts at most 12 selected files; pull additional referenced dependencies in another reviewable batch.
 
@@ -177,6 +201,8 @@ Local writes require an explicitly configured allowed root, an MCP workspace roo
 
 These path checks are defense in depth, not an operating-system security boundary against another same-user process racing to replace a validated directory. The bridge also revalidates snapshot and manifest bytes immediately before replacement. Node does not expose an atomic cross-platform compare-and-swap for regular files, so a concurrent edit can still race after that final check; avoid editing the snapshot while a pull is running. Use separate OS principals or equivalent isolation when mutually untrusted local processes share a workspace.
 
+An optional browser can deepen post-implementation visual QA when the pulled source is safe to run locally. Browser screenshots, DOM summaries, and MHTML are rendering evidence only; they are never accepted as source fallback for a failed, missing, or truncated DesignSync file.
+
 On Codex, the local workspace authority comes from host-injected per-call sandbox metadata, not a model-provided path. A supplied `dir` cannot widen that authority.
 
 ## Privacy and Retention
@@ -200,10 +226,14 @@ The cache uses raw bytes plus integrity metadata. TTL controls reuse only for ca
 | `FILE_EXISTS`                | Local bytes differ from the latest design and are untracked or changed since the prior snapshot; inspect before `overwrite:true` |
 | `FILE_CHANGED`               | A local file changed during replacement; finish the local edit, then retry the design path        |
 | `MANIFEST_INVALID`           | Repair or remove an invalid `.claude-design.json` after reviewing the local snapshot              |
+| `MANIFEST_NOT_FOUND`         | Pull the selected design files before requesting local snapshot status                            |
+| `MANIFEST_VERSION_UNSUPPORTED` | Upgrade the bridge or migrate the manifest with a supported version                             |
+| `MANIFEST_TOO_LARGE`         | Split or clean the managed snapshot before adding more manifest entries                           |
 | `MANIFEST_CONFLICT`          | The snapshot manifest belongs to another project; move it or use the correct project directory    |
 | `MANIFEST_CHANGED`           | The manifest changed during the pull; retry the original design paths after the other writer stops |
 | `SNAPSHOT_BUSY`              | Another process owns `.claude-design.lock`; wait, or remove it only after confirming no pull is active |
 | `SNAPSHOT_STALE`             | The recorded same-host owner exited; inspect the lock, then remove it manually                    |
+| `STATUS_LIMIT_EXCEEDED`      | Reduce snapshot contents or raise the bounded status limit within the supported maximum           |
 | `PARTIAL_PULL`               | Inspect `data.errors`; if the manifest failed, retry the original successful design paths after fixing it |
 
 ## Development
@@ -250,7 +280,10 @@ plugins/claude-design-bridge/
   skills/claude-design-bridge/SKILL.md
   server/claude-delegate.mjs
   server/design-bridge.mjs
+  server/design-source.mjs
   server/design-validation.mjs
+docs/
+  architecture.md
 __tests__/
   fixtures/
   unit/

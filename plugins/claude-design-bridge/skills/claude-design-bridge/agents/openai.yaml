@@ -1,5 +1,5 @@
 interface:
-  display_name: "Claude Design Bridge"
+  display_name: "Claude Design Bridge for Codex"
   short_description: "Fetch and implement Claude Design projects"
   default_prompt: "Use $claude-design-bridge to fetch this Claude Design link and implement the linked screen."
 

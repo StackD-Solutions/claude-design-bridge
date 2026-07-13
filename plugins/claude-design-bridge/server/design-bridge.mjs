@@ -21,7 +21,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { delegate } from "./claude-delegate.mjs";
+import { claudeCodeDesignSource } from "./design-source.mjs";
 import { isValidProjectId, normalizeDesignPath } from "./design-validation.mjs";
 
 export { normalizeDesignPath } from "./design-validation.mjs";
@@ -44,6 +44,9 @@ const SNAPSHOT_LOCK_NAME = ".claude-design.lock";
 const MAX_CACHE_METADATA_BYTES = 64 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_PULL_FILES = 12;
+const MAX_STATUS_PATH_BYTES = 256 * 1024;
+const MAX_ACTIVE_INBOUND_REQUESTS = 64;
+const DESIGN_SOURCE = claudeCodeDesignSource;
 
 const positiveNumber = (value, fallback) => {
   const parsed = Number(value);
@@ -54,6 +57,16 @@ const nonNegativeNumber = (value, fallback) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 };
+
+const MAX_STATUS_ENTRIES = Math.min(
+  4096,
+  Math.max(
+    1,
+    Math.floor(
+      positiveNumber(process.env.DESIGN_BRIDGE_MAX_STATUS_ENTRIES, 1024),
+    ),
+  ),
+);
 
 const DATA_DIR =
   process.env.DESIGN_BRIDGE_DATA_DIR ||
@@ -121,6 +134,11 @@ const failure = (error, detail, data) => ({
 
 const errorDetail = (error) => String(error?.message || error);
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+const isCanonicalTimestamp = (value) =>
+  typeof value === "string" &&
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
+  Number.isFinite(Date.parse(value)) &&
+  new Date(value).toISOString() === value;
 
 const validateProjectId = (projectId) => {
   if (!isValidProjectId(projectId)) {
@@ -364,6 +382,16 @@ const readRegularFile = (filePath, maxBytes, encoding) => {
       }
       offset += bytesRead;
     }
+    const completed = fstatSync(descriptor, { bigint: true });
+    if (
+      completed.dev !== opened.dev ||
+      completed.ino !== opened.ino ||
+      completed.size !== opened.size ||
+      completed.mtimeNs !== opened.mtimeNs ||
+      completed.ctimeNs !== opened.ctimeNs
+    ) {
+      throw new Error(`${path.basename(filePath)} changed while reading it`);
+    }
     return encoding ? bytes.toString(encoding) : bytes;
   } finally {
     closeSync(descriptor);
@@ -528,7 +556,10 @@ const readCache = (projectId, filePath) => {
       typeof metadata.sha256 !== "string" ||
       !/^[a-f0-9]{64}$/.test(metadata.sha256) ||
       typeof metadata.contentType !== "string" ||
-      typeof metadata.binary !== "boolean"
+      typeof metadata.binary !== "boolean" ||
+      !isCanonicalTimestamp(metadata.fetchedAt) ||
+      !Number.isFinite(metadata.fetchedAtMs) ||
+      metadata.fetchedAtMs !== Date.parse(metadata.fetchedAt)
     ) {
       const cleanupWarning = removeCacheEntry(locations);
       return {
@@ -551,6 +582,7 @@ const readCache = (projectId, filePath) => {
         contentType: metadata.contentType,
         binary: Boolean(metadata.binary),
         sha256: digest,
+        fetchedAt: metadata.fetchedAt,
         fromCache: true,
       },
     };
@@ -569,7 +601,7 @@ const readCache = (projectId, filePath) => {
   }
 };
 
-const writeCache = (projectId, filePath, file) => {
+const writeCache = (projectId, filePath, file, fetchedAt) => {
   const prepared = safeCacheObjectDirectory();
   if (!prepared.ok) {
     return { warning: prepared.detail };
@@ -583,8 +615,8 @@ const writeCache = (projectId, filePath, file) => {
     binary: file.binary,
     bytes: file.bytes.length,
     sha256: file.sha256,
-    fetchedAt: new Date().toISOString(),
-    fetchedAtMs: Date.now(),
+    fetchedAt,
+    fetchedAtMs: Date.parse(fetchedAt),
   };
   try {
     atomicWrite(locations.dataPath, file.bytes, {
@@ -719,11 +751,9 @@ const getFileContent = async (projectId, filePath, refresh, signal) => {
     cacheWarning = cached.warning;
   }
 
-  const delegated = await delegate(
-    "get_file",
-    { projectId, path: normalizedPath },
-    { signal },
-  );
+  const delegated = await DESIGN_SOURCE.getFile(projectId, normalizedPath, {
+    signal,
+  });
   if (!delegated.ok) {
     return delegated;
   }
@@ -731,11 +761,18 @@ const getFileContent = async (projectId, filePath, refresh, signal) => {
   if (!decoded.ok) {
     return decoded;
   }
-  const cached = writeCache(projectId, normalizedPath, decoded.data);
+  const fetchedAt = new Date().toISOString();
+  const cached = writeCache(
+    projectId,
+    normalizedPath,
+    decoded.data,
+    fetchedAt,
+  );
   return ok({
     ...decoded.data,
     path: normalizedPath,
     fromCache: false,
+    fetchedAt,
     warnings: [cacheWarning, cached.warning].filter(Boolean),
   });
 };
@@ -757,7 +794,7 @@ const listProjects = async (signal) => {
   if (cancelled) {
     return cancelled;
   }
-  const delegated = await delegate("list_projects", {}, { signal });
+  const delegated = await DESIGN_SOURCE.listProjects({ signal });
   if (!delegated.ok) {
     return delegated;
   }
@@ -776,11 +813,7 @@ const getProject = async (args, signal) => {
   if (!validation.ok) {
     return validation;
   }
-  const delegated = await delegate(
-    "get_project",
-    { projectId: args.projectId },
-    { signal },
-  );
+  const delegated = await DESIGN_SOURCE.getProject(args.projectId, { signal });
   if (!delegated.ok) {
     return delegated;
   }
@@ -829,11 +862,7 @@ const listFiles = async (args, signal) => {
   if (!validation.ok) {
     return validation;
   }
-  const delegated = await delegate(
-    "list_files",
-    { projectId: args.projectId },
-    { signal },
-  );
+  const delegated = await DESIGN_SOURCE.listFiles(args.projectId, { signal });
   if (!delegated.ok) {
     return delegated;
   }
@@ -872,6 +901,7 @@ export const fileResultForTool = (
     contentType: file.contentType,
     binary: file.binary,
     fromCache: file.fromCache,
+    fetchedAt: file.fetchedAt,
     ...(file.warnings?.length ? { warnings: file.warnings } : {}),
     ...(inline
       ? { content: file.bytes.toString("utf8"), contentOmitted: false }
@@ -1097,8 +1127,10 @@ const prepareDirectoryWithinRoot = (root, relativePath) => {
 
 const canonicalDestinationKey = (value) =>
   value.normalize("NFC").toLocaleLowerCase("en-US");
+const compareDesignPaths = (left, right) =>
+  left.path < right.path ? -1 : left.path > right.path ? 1 : 0;
 
-const approveDestination = async (directory, projectId, sandboxRoot) => {
+const selectDestination = async (directory, projectId, sandboxRoot) => {
   const roots = await getAuthorizedRoots(sandboxRoot);
   if (!roots.length) {
     return failure(
@@ -1142,10 +1174,97 @@ const approveDestination = async (directory, projectId, sandboxRoot) => {
       `dir must be ${path.join(lexicalRoot, expectedRelative)}`,
     );
   }
-  const prepared = prepareDirectoryWithinRoot(lexicalRoot, relativeTarget);
+  return ok({
+    lexicalRoot,
+    relativeTarget,
+  });
+};
+
+const approveDestination = async (
+  directory,
+  projectId,
+  sandboxRoot,
+  signal,
+) => {
+  const selected = await selectDestination(directory, projectId, sandboxRoot);
+  if (!selected.ok) {
+    return selected;
+  }
+  const cancelled = cancellationFailure(signal);
+  if (cancelled) {
+    return cancelled;
+  }
+  const prepared = prepareDirectoryWithinRoot(
+    selected.data.lexicalRoot,
+    selected.data.relativeTarget,
+  );
   return prepared.ok
-    ? ok({ directory: prepared.data, root: lexicalRoot })
+    ? ok({ directory: prepared.data, root: selected.data.lexicalRoot })
     : prepared;
+};
+
+const inspectExistingDirectoryWithinRoot = (root, relativePath) => {
+  const segments = relativePath.split(path.sep).filter(Boolean);
+  let current = root;
+  for (const segment of segments) {
+    const candidate = path.join(current, segment);
+    let metadata;
+    try {
+      metadata = lstatSync(candidate);
+    } catch (error) {
+      return isMissingFileError(error)
+        ? failure("SNAPSHOT_NOT_FOUND", "The managed snapshot does not exist")
+        : failure(
+            "BAD_DIR",
+            `Could not inspect the snapshot directory: ${errorDetail(error)}`,
+          );
+    }
+    if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+      return failure(
+        "SYMLINK_ESCAPE",
+        "The managed snapshot path is not a safe directory",
+      );
+    }
+    try {
+      const realCandidate = realpathSync(candidate);
+      if (!isWithin(realCandidate, root)) {
+        return failure(
+          "SYMLINK_ESCAPE",
+          "The managed snapshot resolves outside the workspace root",
+        );
+      }
+      current = realCandidate;
+    } catch (error) {
+      return failure(
+        "BAD_DIR",
+        `Could not resolve the snapshot directory: ${errorDetail(error)}`,
+      );
+    }
+  }
+  return ok(current);
+};
+
+const resolveExistingSnapshotWithinRoot = async (
+  directory,
+  projectId,
+  sandboxRoot,
+  signal,
+) => {
+  const selected = await selectDestination(directory, projectId, sandboxRoot);
+  if (!selected.ok) {
+    return selected;
+  }
+  const cancelled = cancellationFailure(signal);
+  if (cancelled) {
+    return cancelled;
+  }
+  const inspected = inspectExistingDirectoryWithinRoot(
+    selected.data.lexicalRoot,
+    selected.data.relativeTarget,
+  );
+  return inspected.ok
+    ? ok({ directory: inspected.data, root: selected.data.lexicalRoot })
+    : inspected;
 };
 
 const destinationFor = (root, designPath) => {
@@ -1261,7 +1380,7 @@ const writeSnapshotFile = (
             },
           }),
     });
-    const written = readFileSync(validatedDestination);
+    const written = readRegularFile(validatedDestination, MAX_FILE_BYTES);
     if (
       written.length !== file.bytes.length ||
       sha256(written) !== file.sha256
@@ -1322,7 +1441,7 @@ const removeDirectoryEntries = (paths) => {
   return paths.filter((candidate) => !directoryEntries.has(candidate));
 };
 
-const validManifestEntry = (entry) =>
+const validManifestEntry = (entry, requirePulledAt) =>
   entry &&
   typeof entry === "object" &&
   !Array.isArray(entry) &&
@@ -1336,7 +1455,18 @@ const validManifestEntry = (entry) =>
   entry.contentType.length > 0 &&
   entry.contentType.length <= 256 &&
   !CONTROL_CHARACTER_PATTERN.test(entry.contentType) &&
-  typeof entry.binary === "boolean";
+  typeof entry.binary === "boolean" &&
+  (!requirePulledAt || isCanonicalTimestamp(entry.pulledAt));
+
+const validManifestSource = (source) =>
+  source &&
+  typeof source === "object" &&
+  !Array.isArray(source) &&
+  typeof source.id === "string" &&
+  /^[a-z0-9][a-z0-9-]{0,63}$/.test(source.id) &&
+  typeof source.transport === "string" &&
+  /^[a-z0-9][a-z0-9-]{0,63}$/.test(source.transport) &&
+  source.readOnly === true;
 
 const indexPaths = (paths) => {
   const indexed = new Map();
@@ -1464,10 +1594,15 @@ const acquireSnapshotLock = (directory) => {
     writeFileSync(lockPath, token, { flag: "wx", mode: 0o600 });
     assertWriteParent(lockPath, directory, directory);
     const metadata = lstatSync(lockPath);
-    if (metadata.isSymbolicLink() || !metadata.isFile()) {
+    if (
+      metadata.isSymbolicLink() ||
+      !metadata.isFile() ||
+      metadata.size > 1024 ||
+      readRegularFile(lockPath, 1024, "utf8") !== token
+    ) {
       return failure(
         "SNAPSHOT_LOCK_INVALID",
-        `${SNAPSHOT_LOCK_NAME} is not a regular file`,
+        `${SNAPSHOT_LOCK_NAME} changed while it was being acquired`,
       );
     }
     return ok({ lockPath, token });
@@ -1490,7 +1625,7 @@ const releaseSnapshotLock = ({ lockPath, token }) => {
       metadata.isSymbolicLink() ||
       !metadata.isFile() ||
       metadata.size > 1024 ||
-      readFileSync(lockPath, "utf8") !== token
+      readRegularFile(lockPath, 1024, "utf8") !== token
     ) {
       return failure(
         "SNAPSHOT_LOCK_CHANGED",
@@ -1507,7 +1642,11 @@ const releaseSnapshotLock = ({ lockPath, token }) => {
   }
 };
 
-const readManifest = (directory, projectId) => {
+const readManifest = (
+  directory,
+  projectId,
+  { allowMissing = true } = {},
+) => {
   const manifestPath = path.join(directory, MANIFEST_NAME);
   try {
     const metadata = lstatSync(manifestPath);
@@ -1525,17 +1664,43 @@ const readManifest = (directory, projectId) => {
     }
     const manifestBytes = readRegularFile(manifestPath, MAX_MANIFEST_BYTES);
     const previous = JSON.parse(manifestBytes.toString("utf8"));
-    if (
-      previous.schemaVersion !== 1 ||
-      previous.projectId !== projectId ||
-      !Array.isArray(previous.files)
-    ) {
+    if (previous.projectId !== projectId) {
       return failure(
         "MANIFEST_CONFLICT",
         `Existing ${MANIFEST_NAME} belongs to another project`,
       );
     }
-    if (!previous.files.every(validManifestEntry)) {
+    if (previous.schemaVersion !== 1 && previous.schemaVersion !== 2) {
+      return failure(
+        "MANIFEST_VERSION_UNSUPPORTED",
+        `Existing ${MANIFEST_NAME} uses unsupported schema version ${String(previous.schemaVersion)}`,
+      );
+    }
+    if (!Array.isArray(previous.files)) {
+      return failure(
+        "MANIFEST_INVALID",
+        `Existing ${MANIFEST_NAME} does not contain a file list`,
+      );
+    }
+    const isVersionOne = previous.schemaVersion === 1;
+    if (
+      (isVersionOne && !isCanonicalTimestamp(previous.pulledAt)) ||
+      (!isVersionOne &&
+        (!isCanonicalTimestamp(previous.updatedAt) ||
+          previous.projectUrl !==
+            `https://claude.ai/design/p/${projectId}` ||
+          !validManifestSource(previous.source)))
+    ) {
+      return failure(
+        "MANIFEST_INVALID",
+        `Existing ${MANIFEST_NAME} has invalid provenance metadata`,
+      );
+    }
+    if (
+      !previous.files.every((entry) =>
+        validManifestEntry(entry, !isVersionOne),
+      )
+    ) {
       return failure(
         "MANIFEST_INVALID",
         `Existing ${MANIFEST_NAME} has invalid file metadata`,
@@ -1551,13 +1716,31 @@ const readManifest = (directory, projectId) => {
       );
     }
     return ok({
-      entries: previous.files,
+      entries: previous.files.map((entry) => ({
+        ...entry,
+        pulledAt: isVersionOne ? previous.pulledAt : entry.pulledAt,
+      })),
       fingerprint: sha256(manifestBytes),
       manifestPath,
+      migratedFromVersion: isVersionOne ? 1 : null,
+      source: isVersionOne ? null : previous.source,
+      updatedAt: isVersionOne ? previous.pulledAt : previous.updatedAt,
     });
   } catch (error) {
     if (isMissingFileError(error)) {
-      return ok({ entries: [], fingerprint: null, manifestPath });
+      return allowMissing
+        ? ok({
+            entries: [],
+            fingerprint: null,
+            manifestPath,
+            migratedFromVersion: null,
+            source: null,
+            updatedAt: null,
+          })
+        : failure(
+            "MANIFEST_NOT_FOUND",
+            `The managed snapshot does not contain ${MANIFEST_NAME}`,
+          );
     }
     return failure(
       "MANIFEST_INVALID",
@@ -1609,16 +1792,26 @@ const writeManifest = (
     merged.set(canonicalDestinationKey(entry.path), entry);
   }
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId,
     projectUrl: `https://claude.ai/design/p/${projectId}`,
-    pulledAt: new Date().toISOString(),
-    files: [...merged.values()].sort((left, right) =>
-      left.path.localeCompare(right.path),
-    ),
+    updatedAt: new Date().toISOString(),
+    source: {
+      id: DESIGN_SOURCE.id,
+      transport: DESIGN_SOURCE.transport,
+      readOnly: DESIGN_SOURCE.capabilities.write === false,
+    },
+    files: [...merged.values()].sort(compareDesignPaths),
   };
+  const manifestBytes = `${JSON.stringify(manifest, null, 2)}\n`;
+  if (Buffer.byteLength(manifestBytes, "utf8") > MAX_MANIFEST_BYTES) {
+    return failure(
+      "MANIFEST_TOO_LARGE",
+      `${MANIFEST_NAME} would exceed the ${MAX_MANIFEST_BYTES}-byte limit`,
+    );
+  }
   try {
-    atomicWrite(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, {
+    atomicWrite(manifestPath, manifestBytes, {
       expectedParent: directory,
       containmentRoot: directory,
       expectedDestination: {
@@ -1637,6 +1830,331 @@ const writeManifest = (
     }
     return failure("MANIFEST_WRITE_FAILED", errorDetail(error));
   }
+};
+
+const validateSnapshotStatusArguments = (args) => {
+  const maxEntries =
+    args?.maxEntries === undefined ? MAX_STATUS_ENTRIES : args.maxEntries;
+  if (
+    !Number.isInteger(maxEntries) ||
+    maxEntries < 1 ||
+    maxEntries > MAX_STATUS_ENTRIES
+  ) {
+    return failure(
+      "BAD_MAX_ENTRIES",
+      `maxEntries must be an integer from 1 through ${MAX_STATUS_ENTRIES}`,
+    );
+  }
+  return ok({ maxEntries });
+};
+
+const yieldToEventLoop = () =>
+  new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+
+const inspectSnapshotEntries = async (directory, maxEntries, signal) => {
+  const files = [];
+  const pending = [{ absolutePath: directory, relativePath: "" }];
+  let inspectedEntries = 0;
+  let pathBytes = 0;
+
+  while (pending.length) {
+    const current = pending.pop();
+    let entries;
+    try {
+      entries = readdirSync(current.absolutePath, { withFileTypes: true });
+    } catch (error) {
+      return failure(
+        "SNAPSHOT_READ_FAILED",
+        `Could not enumerate the managed snapshot: ${errorDetail(error)}`,
+      );
+    }
+
+    for (const entry of entries) {
+      const relativePath = current.relativePath
+        ? `${current.relativePath}/${entry.name}`
+        : entry.name;
+      if (
+        current.relativePath === "" &&
+        (relativePath === MANIFEST_NAME ||
+          relativePath === SNAPSHOT_LOCK_NAME)
+      ) {
+        continue;
+      }
+
+      inspectedEntries += 1;
+      if (inspectedEntries % 32 === 0) {
+        await yieldToEventLoop();
+        const cancelled = cancellationFailure(signal);
+        if (cancelled) {
+          return cancelled;
+        }
+      }
+      pathBytes += Buffer.byteLength(relativePath, "utf8");
+      if (
+        inspectedEntries > maxEntries ||
+        pathBytes > MAX_STATUS_PATH_BYTES
+      ) {
+        return failure(
+          "STATUS_LIMIT_EXCEEDED",
+          `Snapshot status exceeded maxEntries=${maxEntries} or the path-byte limit`,
+        );
+      }
+
+      const normalizedPath = normalizeDesignPath(relativePath);
+      if (normalizedPath !== relativePath) {
+        return failure(
+          "SNAPSHOT_ENTRY_INVALID",
+          "The managed snapshot contains a path that cannot be represented safely",
+        );
+      }
+
+      const absolutePath = path.join(current.absolutePath, entry.name);
+      let metadata;
+      try {
+        metadata = lstatSync(absolutePath);
+      } catch (error) {
+        if (isMissingFileError(error)) {
+          continue;
+        }
+        return failure(
+          "SNAPSHOT_READ_FAILED",
+          `Could not inspect the managed snapshot: ${errorDetail(error)}`,
+        );
+      }
+
+      if (metadata.isSymbolicLink()) {
+        return failure(
+          "SYMLINK_ESCAPE",
+          "The managed snapshot contains a symbolic link or junction",
+        );
+      }
+      if (metadata.isDirectory()) {
+        try {
+          const realDirectory = realpathSync(absolutePath);
+          if (!isWithin(realDirectory, directory)) {
+            return failure(
+              "SYMLINK_ESCAPE",
+              "The managed snapshot contains a directory outside its root",
+            );
+          }
+          pending.push({
+            absolutePath: realDirectory,
+            relativePath,
+          });
+        } catch (error) {
+          return failure(
+            "SNAPSHOT_READ_FAILED",
+            `Could not resolve the managed snapshot: ${errorDetail(error)}`,
+          );
+        }
+        continue;
+      }
+      if (!metadata.isFile()) {
+        return failure(
+          "SNAPSHOT_ENTRY_INVALID",
+          "The managed snapshot contains a non-file entry",
+        );
+      }
+      files.push({ absolutePath, path: relativePath, bytes: metadata.size });
+    }
+  }
+
+  files.sort(compareDesignPaths);
+  const indexed = indexPaths(files.map((file) => file.path));
+  return indexed.ok ? ok(files) : indexed;
+};
+
+const snapshotLockStatus = (directory) => {
+  const lockPath = path.join(directory, SNAPSHOT_LOCK_NAME);
+  try {
+    lstatSync(lockPath);
+    return existingSnapshotLockFailure(lockPath);
+  } catch (error) {
+    return isMissingFileError(error)
+      ? null
+      : failure(
+          "SNAPSHOT_READ_FAILED",
+          `Could not inspect ${SNAPSHOT_LOCK_NAME}: ${errorDetail(error)}`,
+        );
+  }
+};
+
+const snapshotStatus = async (args, signal, sandboxRoot) => {
+  const initialCancellation = cancellationFailure(signal);
+  if (initialCancellation) {
+    return initialCancellation;
+  }
+  const projectValidation = validateProjectId(args?.projectId);
+  if (!projectValidation.ok) {
+    return projectValidation;
+  }
+  const statusArguments = validateSnapshotStatusArguments(args);
+  if (!statusArguments.ok) {
+    return statusArguments;
+  }
+  const destination = await resolveExistingSnapshotWithinRoot(
+    args?.dir,
+    args.projectId,
+    sandboxRoot,
+    signal,
+  );
+  if (!destination.ok) {
+    return destination;
+  }
+
+  const activeLock = snapshotLockStatus(destination.data.directory);
+  if (activeLock) {
+    return activeLock;
+  }
+  const manifest = readManifest(destination.data.directory, args.projectId, {
+    allowMissing: false,
+  });
+  if (!manifest.ok) {
+    return manifest;
+  }
+  if (manifest.data.entries.length > statusArguments.data.maxEntries) {
+    return failure(
+      "STATUS_LIMIT_EXCEEDED",
+      `Manifest entries exceed maxEntries=${statusArguments.data.maxEntries}`,
+    );
+  }
+
+  const inspected = await inspectSnapshotEntries(
+    destination.data.directory,
+    statusArguments.data.maxEntries,
+    signal,
+  );
+  if (!inspected.ok) {
+    return inspected;
+  }
+  const combinedPaths = indexPaths([
+    ...manifest.data.entries.map((entry) => entry.path),
+    ...inspected.data.map((entry) => entry.path),
+  ]);
+  if (!combinedPaths.ok) {
+    return combinedPaths;
+  }
+
+  const localByKey = new Map(
+    inspected.data.map((entry) => [
+      canonicalDestinationKey(entry.path),
+      entry,
+    ]),
+  );
+  const manifestKeys = new Set(
+    manifest.data.entries.map((entry) =>
+      canonicalDestinationKey(entry.path),
+    ),
+  );
+  const summary = { clean: 0, modified: 0, missing: 0, untracked: 0 };
+  const files = [];
+
+  for (const [index, expected] of manifest.data.entries.entries()) {
+    if (index > 0 && index % 32 === 0) {
+      await yieldToEventLoop();
+      const cancelled = cancellationFailure(signal);
+      if (cancelled) {
+        return cancelled;
+      }
+    }
+    const local = localByKey.get(canonicalDestinationKey(expected.path));
+    if (!local) {
+      summary.missing += 1;
+      files.push({
+        path: expected.path,
+        status: "missing",
+        expectedSha256: expected.sha256,
+        pulledAt: expected.pulledAt,
+      });
+      continue;
+    }
+    if (local.bytes > MAX_FILE_BYTES) {
+      summary.modified += 1;
+      files.push({
+        path: expected.path,
+        status: "modified",
+        expectedSha256: expected.sha256,
+        actualSha256: null,
+        actualBytes: local.bytes,
+        pulledAt: expected.pulledAt,
+        detail: `Local file exceeds the ${MAX_FILE_BYTES}-byte status hash limit`,
+      });
+      continue;
+    }
+
+    let bytes;
+    try {
+      bytes = readRegularFile(local.absolutePath, MAX_FILE_BYTES);
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        summary.missing += 1;
+        files.push({
+          path: expected.path,
+          status: "missing",
+          expectedSha256: expected.sha256,
+          pulledAt: expected.pulledAt,
+        });
+        continue;
+      }
+      return failure(
+        "SNAPSHOT_CHANGED",
+        `A snapshot file changed during status inspection: ${errorDetail(error)}`,
+      );
+    }
+    const actualSha256 = sha256(bytes);
+    const status = actualSha256 === expected.sha256 ? "clean" : "modified";
+    summary[status] += 1;
+    files.push({
+      path: expected.path,
+      status,
+      expectedSha256: expected.sha256,
+      actualSha256,
+      actualBytes: bytes.length,
+      pulledAt: expected.pulledAt,
+    });
+  }
+
+  const untracked = inspected.data
+    .filter(
+      (entry) => !manifestKeys.has(canonicalDestinationKey(entry.path)),
+    )
+    .map((entry) => entry.path);
+  summary.untracked = untracked.length;
+
+  const revalidatedManifest = readManifest(
+    destination.data.directory,
+    args.projectId,
+    { allowMissing: false },
+  );
+  if (
+    !revalidatedManifest.ok ||
+    revalidatedManifest.data.fingerprint !== manifest.data.fingerprint
+  ) {
+    return failure(
+      "MANIFEST_CHANGED",
+      `${MANIFEST_NAME} changed during status inspection`,
+    );
+  }
+  const endingLock = snapshotLockStatus(destination.data.directory);
+  if (endingLock) {
+    return endingLock;
+  }
+
+  const dirty =
+    summary.modified > 0 || summary.missing > 0 || summary.untracked > 0;
+  return ok({
+    projectId: args.projectId,
+    dir: destination.data.directory,
+    state: dirty ? "dirty" : "clean",
+    manifestSchemaVersion: manifest.data.migratedFromVersion ?? 2,
+    updatedAt: manifest.data.updatedAt,
+    source: manifest.data.source,
+    summary,
+    files,
+    untracked,
+  });
 };
 
 const validatePullArguments = (args) => {
@@ -1768,6 +2286,10 @@ const performPull = async (args, signal, destination, selection) => {
       if (!file.ok) {
         return { path: filePath, result: file };
       }
+      const postFetchCancellation = cancellationFailure(signal);
+      if (postFetchCancellation) {
+        return { path: filePath, result: postFetchCancellation };
+      }
       selectedBytes += file.data.bytes.length;
       if (selectedBytes > MAX_PULL_BYTES) {
         pullLimitExceeded = true;
@@ -1806,6 +2328,7 @@ const performPull = async (args, signal, destination, selection) => {
           unchanged: written.data.unchanged,
           updated: written.data.updated,
           forced: written.data.forced,
+          pulledAt: file.data.fetchedAt,
           ...(file.data.warnings?.length
             ? { warnings: file.data.warnings }
             : {}),
@@ -1830,6 +2353,7 @@ const performPull = async (args, signal, destination, selection) => {
     sha256: entry.sha256,
     contentType: entry.contentType,
     binary: entry.binary,
+    pulledAt: entry.pulledAt,
   }));
   const manifest = manifestEntries.length
     ? writeManifest(
@@ -1883,12 +2407,17 @@ const pull = async (args, signal, sandboxRoot) => {
     args?.dir,
     args.projectId,
     sandboxRoot,
+    signal,
   );
   if (!destination.ok) {
     return destination;
   }
   const lockKey = canonicalDestinationKey(destination.data.directory);
   return withPullLock(lockKey, async () => {
+    const queuedCancellation = cancellationFailure(signal);
+    if (queuedCancellation) {
+      return queuedCancellation;
+    }
     const lock = acquireSnapshotLock(destination.data.directory);
     if (!lock.ok) {
       return lock;
@@ -1919,6 +2448,13 @@ const pull = async (args, signal, sandboxRoot) => {
 
 const doctor = async (signal, sandboxRoot) => {
   const checks = [];
+  const source = {
+    id: DESIGN_SOURCE.id,
+    transport: DESIGN_SOURCE.transport,
+    readOnly: DESIGN_SOURCE.capabilities.write === false,
+    revisions: DESIGN_SOURCE.capabilities.revisions,
+    remoteChecksums: DESIGN_SOURCE.capabilities.remoteChecksums,
+  };
   const projects = await listProjects(signal);
   if (!projects.ok) {
     checks.push({
@@ -1934,7 +2470,11 @@ const doctor = async (signal, sandboxRoot) => {
           : projects.error === "NEEDS_DESIGN_LOGIN"
             ? "Run /design login in Claude Code (legacy builds: /design-login)."
             : "Check Claude Code login, design access, network policy, and the diagnostic detail.";
-    return failure(projects.error, projects.detail, { checks, guidance });
+    return failure(projects.error, projects.detail, {
+      checks,
+      guidance,
+      source,
+    });
   }
   const projectCount = projects.data.projects.length;
   checks.push({
@@ -1958,13 +2498,20 @@ const doctor = async (signal, sandboxRoot) => {
   const guidance = projectCount
     ? "Ready. Paste a Claude Design link and ask Codex to fetch or implement it."
     : "Bridge access is working. Paste an exact Claude Design link; an empty list only means no writable projects were enumerated.";
-  return ok({ checks, projectCount, guidance });
+  return ok({ checks, projectCount, guidance, source });
 };
 
 const TOOLS = [
   {
     name: "design_list_projects",
+    title: "List Claude Design projects",
     description: "List the user's writable claude.ai Design projects.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {},
@@ -1973,8 +2520,15 @@ const TOOLS = [
   },
   {
     name: "design_resolve_link",
+    title: "Resolve a Claude Design link",
     description:
       "Resolve an exact https://claude.ai/design/p/<id>?file=<path> link locally.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     inputSchema: {
       type: "object",
       properties: {
@@ -1986,7 +2540,14 @@ const TOOLS = [
   },
   {
     name: "design_get_project",
+    title: "Get a Claude Design project",
     description: "Get metadata for one Claude Design project.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: { projectId: { type: "string" } },
@@ -1996,7 +2557,14 @@ const TOOLS = [
   },
   {
     name: "design_list_files",
+    title: "List Claude Design files",
     description: "List normalized paths in one Claude Design project.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: { projectId: { type: "string" } },
@@ -2006,8 +2574,15 @@ const TOOLS = [
   },
   {
     name: "design_get_file",
+    title: "Read a Claude Design file",
     description:
       "Fetch and hash the latest version of one design file. Small text is returned inline; use design_pull for large or binary files.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
@@ -2029,8 +2604,15 @@ const TOOLS = [
   },
   {
     name: "design_pull",
+    title: "Pull a Claude Design snapshot",
     description:
       "Fetch the latest selected design files, safely update the managed snapshot at <workspace>/.design/claude/<projectId>, and write a SHA-256 provenance manifest.",
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
@@ -2072,9 +2654,49 @@ const TOOLS = [
     },
   },
   {
+    name: "design_snapshot_status",
+    title: "Check Claude Design snapshot status",
+    description:
+      "Compare an existing managed snapshot with its SHA-256 manifest without contacting Claude Design or creating directories.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        dir: {
+          type: "string",
+          description:
+            "Optional exact <workspace>/.design/claude/<projectId> directory; derived from trusted Codex metadata when omitted",
+        },
+        maxEntries: {
+          type: "integer",
+          minimum: 1,
+          maximum: MAX_STATUS_ENTRIES,
+          default: MAX_STATUS_ENTRIES,
+          description:
+            "Maximum snapshot entries to inspect before failing closed",
+        },
+      },
+      required: ["projectId"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "design_doctor",
+    title: "Diagnose Claude Design access",
     description:
       "Verify Claude Code, raw DesignSync access, project visibility, workspace roots, and login/consent guidance.",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {},
@@ -2084,6 +2706,12 @@ const TOOLS = [
 ];
 
 const TOOL_NAMES = new Set(TOOLS.map((tool) => tool.name));
+const TOOL_BY_NAME = new Map(TOOLS.map((tool) => [tool.name, tool]));
+
+const unexpectedArgument = (name, args) => {
+  const properties = TOOL_BY_NAME.get(name)?.inputSchema?.properties ?? {};
+  return Object.keys(args).find((key) => !Object.hasOwn(properties, key));
+};
 
 const callTool = (name, args, signal, sandboxRoot) => {
   switch (name) {
@@ -2099,6 +2727,8 @@ const callTool = (name, args, signal, sandboxRoot) => {
       return getFile(args, signal);
     case "design_pull":
       return pull(args, signal, sandboxRoot);
+    case "design_snapshot_status":
+      return snapshotStatus(args, signal, sandboxRoot);
     case "design_doctor":
       return doctor(signal, sandboxRoot);
     default:
@@ -2276,6 +2906,15 @@ const handle = async (message) => {
       replyError(id, -32602, `Unknown tool: ${name}`);
       return;
     }
+    const unexpected = unexpectedArgument(name, args);
+    if (unexpected !== undefined) {
+      replyError(id, -32602, `Unexpected argument for ${name}: ${unexpected}`);
+      return;
+    }
+    if (activeInboundRequests.size >= MAX_ACTIVE_INBOUND_REQUESTS) {
+      replyError(id, -32000, "Too many bridge requests are active");
+      return;
+    }
     const controller = new AbortController();
     activeInboundRequests.set(id, controller);
     try {
@@ -2367,7 +3006,7 @@ export const startServer = () => {
   });
 
   process.stderr.write(
-    `[claude-design-bridge] ready v${SERVER_INFO.version} (model=${process.env.DESIGN_BRIDGE_MODEL || "haiku"}, cache=${CACHE_DIR})\n`,
+    `[claude-design-bridge] ready v${SERVER_INFO.version}\n`,
   );
 };
 

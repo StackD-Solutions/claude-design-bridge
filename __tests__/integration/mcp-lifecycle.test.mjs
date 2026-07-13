@@ -620,6 +620,9 @@ test("should reuse cached design bytes only when refresh is false", async (conte
       updated: cached.data.written?.[0]?.updated,
       forced: cached.data.written?.[0]?.forced,
       manifestSha256: currentManifest.files[0].sha256,
+      fetchedTimestampPreserved:
+        currentManifest.files[0].pulledAt ===
+        previousManifest.files[0].pulledAt,
     },
     {
       initialIsError: false,
@@ -630,6 +633,7 @@ test("should reuse cached design bytes only when refresh is false", async (conte
       updated: false,
       forced: false,
       manifestSha256: previousManifest.files[0].sha256,
+      fetchedTimestampPreserved: true,
     },
   );
 });
@@ -913,6 +917,65 @@ test("should pull under the per-call Codex sandbox root without MCP roots", asyn
   const result = JSON.parse(response.result.content[0].text);
 
   assert.equal(result.count, 1);
+});
+
+test("should not create a snapshot when cancellation wins root resolution", async (context) => {
+  const workspaceRoot = mkdtempSync(
+    path.join(os.tmpdir(), "codex-design-cancelled-root-"),
+  );
+  const snapshotDirectory = path.join(
+    workspaceRoot,
+    ".design",
+    "claude",
+    "mock-pid-1",
+  );
+  const harness = startHarness({
+    NODE_ENV: "test",
+    DESIGN_BRIDGE_TEST_FIXTURE: fixturePath,
+    DESIGN_BRIDGE_CACHE_DIR: path.join(workspaceRoot, "cache"),
+  });
+  context.after(() => {
+    harness.close();
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  });
+  await harness.initialize();
+  harness.child.stdin.write(
+    `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+  );
+  const requestId = "cancelled-root-resolution";
+  harness.child.stdin.write(
+    `${JSON.stringify({
+      jsonrpc: "2.0",
+      id: requestId,
+      method: "tools/call",
+      params: {
+        name: "design_pull",
+        arguments: {
+          projectId: "mock-pid-1",
+          paths: ["components/button.html"],
+        },
+        _meta: {
+          [sandboxMetaKey]: {
+            permissionProfile: { type: "disabled" },
+            sandboxCwd: pathToFileURL(workspaceRoot).toString(),
+          },
+        },
+      },
+    })}\n${JSON.stringify({
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId },
+    })}\n`,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  assert.deepEqual(
+    {
+      responseCount: harness.messages.length,
+      snapshotExists: existsSync(snapshotDirectory),
+    },
+    { responseCount: 0, snapshotExists: false },
+  );
 });
 
 test("should reject malformed sandbox metadata without another authorized root", async (context) => {

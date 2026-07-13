@@ -1,14 +1,15 @@
 {
   "name": "claude-design-bridge",
-  "version": "0.1.0",
-  "description": "Use your Claude Design projects directly in Codex",
+  "version": "0.2.0",
+  "description": "Read-only Codex bridge for fetching official Claude Design source through Claude Code DesignSync with verified snapshots and SHA-256 provenance.",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
-    "check": "node --check plugins/claude-design-bridge/server/design-validation.mjs && node --check plugins/claude-design-bridge/server/claude-delegate.mjs && node --check plugins/claude-design-bridge/server/design-bridge.mjs",
+    "check": "node --check plugins/claude-design-bridge/server/design-validation.mjs && node --check plugins/claude-design-bridge/server/claude-delegate.mjs && node --check plugins/claude-design-bridge/server/design-source.mjs && node --check plugins/claude-design-bridge/server/design-bridge.mjs && node --check scripts/benchmark-design-reads.mjs",
     "test": "node --test __tests__/unit/*.test.mjs __tests__/integration/*.test.mjs",
     "test:live": "node --test __tests__/live/*.test.mjs",
+    "benchmark:live": "node scripts/benchmark-design-reads.mjs",
     "verify": "npm run check && npm test"
   },
   "engines": {
