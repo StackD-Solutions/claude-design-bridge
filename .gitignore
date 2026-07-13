@@ -1,0 +1,8 @@
+node_modules/
+*.log
+.coverage/
+.design/
+.code-review-graph/
+.claude/
+.idea/
+.tasks/

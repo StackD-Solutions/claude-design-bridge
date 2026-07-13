@@ -1,0 +1,29 @@
+{
+  "list_projects": {
+    "method": "list_projects",
+    "projects": [
+      {
+        "name": "Mock Design",
+        "projectId": "mock-pid-1"
+      }
+    ]
+  },
+  "get_project": {
+    "method": "get_project",
+    "projectId": "mock-pid-1",
+    "name": "Mock Design",
+    "canEdit": true
+  },
+  "list_files": {
+    "method": "list_files",
+    "files": ["components", "components/button.html", "tokens/colors.css"]
+  },
+  "get_file": {
+    "method": "get_file",
+    "path": "REQUESTED",
+    "contentType": "text/html",
+    "isBase64": false,
+    "truncated": false,
+    "content": "<button class=\"btn\">Hi</button>"
+  }
+}

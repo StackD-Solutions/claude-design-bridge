@@ -1,0 +1,20 @@
+{
+  "name": "stackd-solutions",
+  "interface": {
+    "displayName": "StackD Solutions"
+  },
+  "plugins": [
+    {
+      "name": "claude-design-bridge",
+      "source": {
+        "source": "local",
+        "path": "./plugins/claude-design-bridge"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Design"
+    }
+  ]
+}

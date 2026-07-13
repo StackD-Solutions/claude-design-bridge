@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "claude-design-bridge": {
+      "command": "node",
+      "args": ["./server/design-bridge.mjs"],
+      "cwd": ".",
+      "tool_timeout_sec": 600
+    }
+  }
+}

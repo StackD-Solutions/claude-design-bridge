@@ -1,0 +1,13 @@
+interface:
+  display_name: "Claude Design Bridge"
+  short_description: "Fetch and implement Claude Design projects"
+  default_prompt: "Use $claude-design-bridge to fetch this Claude Design link and implement the linked screen."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "claude-design-bridge"
+      description: "Remote-read-only Claude Design bridge with local snapshots"
+
+policy:
+  allow_implicit_invocation: true

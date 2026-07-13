@@ -1,0 +1,17 @@
+{
+  "name": "claude-design-bridge",
+  "version": "0.1.0",
+  "description": "Use your Claude Design projects directly in Codex",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "check": "node --check plugins/claude-design-bridge/server/design-validation.mjs && node --check plugins/claude-design-bridge/server/claude-delegate.mjs && node --check plugins/claude-design-bridge/server/design-bridge.mjs",
+    "test": "node --test __tests__/unit/*.test.mjs __tests__/integration/*.test.mjs",
+    "test:live": "node --test __tests__/live/*.test.mjs",
+    "verify": "npm run check && npm test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

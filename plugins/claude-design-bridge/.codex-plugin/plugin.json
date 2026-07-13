@@ -1,0 +1,32 @@
+{
+  "name": "claude-design-bridge",
+  "version": "0.1.0+codex.20260712205916",
+  "description": "Use your Claude Design projects directly in Codex",
+  "author": {
+    "name": "StackD Solutions"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "claude",
+    "design",
+    "designsync"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Claude Design Bridge",
+    "shortDescription": "Fetch the latest Claude Design source and implement it in Codex",
+    "longDescription": "Brings the latest selected files from your Claude Design projects into Codex whenever they are fetched. Unmodified snapshot files update in place, while local edits are preserved unless you explicitly force replacement. Records SHA-256 provenance and validates cached and written bytes so Codex builds from the real design source rather than a screenshot or re-typed approximation. Works through your existing Claude Code login with no separate sign-in or manual export. Fetching is on demand, not background synchronization; remote access is read-only.",
+    "developerName": "StackD Solutions",
+    "category": "Design",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Fetch this Claude Design link and implement the linked screen.",
+      "Apply the named Claude Design component to this project.",
+      "List my Claude Design projects."
+    ]
+  }
+}
