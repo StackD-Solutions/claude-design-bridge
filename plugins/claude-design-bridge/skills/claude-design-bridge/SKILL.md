@@ -24,6 +24,12 @@ Claude Code owns both authentication gates:
 If a read fails, run `design_doctor`. Treat `NEEDS_DESIGN_LOGIN` and
 `NEEDS_DESIGN_CONSENT` as distinct fixes.
 
+If a read returns `CLAUDE_SESSION_LIMIT`, show its `detail` exactly as returned. The detail already
+attributes the limit to Claude Code while preserving its reset time and timezone. Then stop the
+design-based task and ask whether the user wants to wait until that reset and retry, or abort. Do
+not implement from an existing snapshot or other stale source unless the user explicitly changes
+the freshness requirement and accepts that risk.
+
 ## Workflow
 
 1. Resolve the target.

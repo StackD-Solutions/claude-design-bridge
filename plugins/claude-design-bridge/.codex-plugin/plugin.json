@@ -1,6 +1,6 @@
 {
   "name": "claude-design-bridge",
-  "version": "0.2.0+codex.20260713144049",
+  "version": "0.2.0+codex.20260714125721",
   "description": "Read-only Codex bridge for fetching official Claude Design source through Claude Code DesignSync with verified snapshots and SHA-256 provenance.",
   "author": {
     "name": "StackD Solutions"

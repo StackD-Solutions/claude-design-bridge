@@ -23,6 +23,18 @@ const initEvent = {
   tools: ["DesignSync"],
 };
 
+const sessionLimitMessage =
+  "You've hit your session limit · resets 4:30pm (Europe/Amsterdam)";
+const sessionLimitDetail = `Claude Code: ${sessionLimitMessage}`;
+
+const sessionLimitEvent = {
+  type: "assistant",
+  message: {
+    error: "rate_limit",
+    content: [{ type: "text", text: sessionLimitMessage }],
+  },
+};
+
 const toolUseEvent = (input = { method, ...args }) => ({
   type: "assistant",
   message: {
@@ -185,6 +197,17 @@ describe("sanitizeDiagnostic", () => {
 });
 
 describe("createBatchToolResultMatcher", () => {
+  test("should stop a batch on the reported Claude session limit", () => {
+    const matcher = createBatchToolResultMatcher(args.projectId, batchPaths);
+    matcher.accept(initEvent);
+
+    assert.deepEqual(matcher.accept(sessionLimitEvent), {
+      ok: false,
+      error: "CLAUDE_SESSION_LIMIT",
+      detail: sessionLimitDetail,
+    });
+  });
+
   test("should return exact batch results in request order", () => {
     const matcher = createBatchToolResultMatcher(args.projectId, batchPaths);
     matcher.accept(initEvent);
@@ -397,6 +420,37 @@ test("should accept a correlated raw DesignSync result", () => {
     ok: true,
     data: raw,
   });
+});
+
+test("should preserve the reported Claude session limit message", () => {
+  const matcher = createToolResultMatcher(method, args);
+  matcher.accept(initEvent);
+
+  assert.deepEqual(matcher.accept(sessionLimitEvent), {
+    ok: false,
+    error: "CLAUDE_SESSION_LIMIT",
+    detail: sessionLimitDetail,
+  });
+});
+
+test("should reject an error result even when its subtype is success", () => {
+  const matcher = createToolResultMatcher(method, args);
+  matcher.accept(initEvent);
+
+  assert.deepEqual(
+    matcher.accept({
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      api_error_status: 429,
+      result: sessionLimitMessage,
+    }),
+    {
+      ok: false,
+      error: "CLAUDE_SESSION_LIMIT",
+      detail: sessionLimitDetail,
+    },
+  );
 });
 
 test("should reject an unavailable DesignSync tool", () => {

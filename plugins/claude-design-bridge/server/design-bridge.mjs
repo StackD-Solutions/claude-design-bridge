@@ -2465,6 +2465,8 @@ const doctor = async (signal, sandboxRoot) => {
     const guidance =
       projects.error === "DELEGATE_SPAWN_FAILED"
         ? "Install Claude Code or set CLAUDE_BIN to its native executable."
+        : projects.error === "CLAUDE_SESSION_LIMIT"
+          ? "Wait until the reported Claude session limit reset, then retry, or abort the design-based task. Do not continue from stale design source."
         : projects.error === "NEEDS_DESIGN_CONSENT"
           ? "Run /design consent in Claude Code."
           : projects.error === "NEEDS_DESIGN_LOGIN"

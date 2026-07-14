@@ -217,6 +217,7 @@ The cache uses raw bytes plus integrity metadata. TTL controls reuse only for ca
 
 | Error                        | Resolution                                                                                        |
 | ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| `CLAUDE_SESSION_LIMIT`       | Show the Claude Code-attributed reset time, stop, and let the user choose whether to retry or abort |
 | `NEEDS_DESIGN_LOGIN`         | Run `/design login` in Claude Code (`/design-login` on legacy builds)                              |
 | `NEEDS_DESIGN_CONSENT`       | Run `/design consent` in Claude Code                                                               |
 | `DELEGATE_SPAWN_FAILED`      | Install Claude Code or set `CLAUDE_BIN` to the native executable                                   |

@@ -128,8 +128,19 @@ export const sanitizeDiagnostic = (value) =>
     .trim()
     .slice(0, 600);
 
+const claudeSessionLimitFailure = (value) => {
+  const message = sanitizeDiagnostic(value);
+  const detail = /^Claude(?: Code)?:/i.test(message)
+    ? message
+    : `Claude Code: ${message || "Usage is temporarily limited"}`;
+  return failure("CLAUDE_SESSION_LIMIT", detail);
+};
+
 const classifyToolError = (value) => {
   const message = sanitizeDiagnostic(value);
+  if (/session limit|usage limit|rate limit/i.test(message)) {
+    return claudeSessionLimitFailure(message);
+  }
   if (/consent|agent_design_projects/i.test(message)) {
     return failure("NEEDS_DESIGN_CONSENT", message);
   }
@@ -144,6 +155,35 @@ const classifyToolError = (value) => {
     return failure("DESIGNSYNC_PERMISSION_DENIED", message);
   }
   return failure("DESIGNSYNC_ERROR", message || "DesignSync returned an error");
+};
+
+const assistantError = (event) => {
+  if (event?.type !== "assistant" || event.message?.error !== "rate_limit") {
+    return null;
+  }
+  const content = Array.isArray(event.message.content)
+    ? event.message.content
+    : [];
+  const message = content
+    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .map((block) => block.text)
+    .join(" ");
+  return claudeSessionLimitFailure(message);
+};
+
+const resultEventError = (event) => {
+  if (
+    event?.type !== "result" ||
+    (event.subtype === "success" && event.is_error !== true)
+  ) {
+    return null;
+  }
+  const classified = classifyToolError(
+    event.result || event.subtype || "Claude Code reported an error",
+  );
+  return classified.error === "DESIGNSYNC_ERROR"
+    ? failure("CLAUDE_ERROR", classified.detail)
+    : classified;
 };
 
 const canonicalArgs = (method, args) => {
@@ -322,6 +362,10 @@ export const createToolResultMatcher = (method, args) => {
     }
 
     if (event?.type === "assistant") {
+      const error = assistantError(event);
+      if (error) {
+        return error;
+      }
       const toolUses = Array.isArray(event.message?.content)
         ? event.message.content.filter((block) => block?.type === "tool_use")
         : [];
@@ -417,15 +461,7 @@ export const createToolResultMatcher = (method, args) => {
       return { ok: true, data: rawResult };
     }
 
-    if (event?.type === "result" && event?.subtype !== "success") {
-      const classified = classifyToolError(
-        event.result || event.subtype || "Claude Code reported an error",
-      );
-      return classified.error === "DESIGNSYNC_ERROR"
-        ? failure("CLAUDE_ERROR", classified.detail)
-        : classified;
-    }
-    return null;
+    return resultEventError(event);
   };
 
   return {
@@ -488,6 +524,10 @@ export const createBatchToolResultMatcher = (projectId, requestedPaths) => {
     }
 
     if (event?.type === "assistant") {
+      const error = assistantError(event);
+      if (error) {
+        return error;
+      }
       const toolUses = Array.isArray(event.message?.content)
         ? event.message.content.filter((block) => block?.type === "tool_use")
         : [];
@@ -628,15 +668,7 @@ export const createBatchToolResultMatcher = (projectId, requestedPaths) => {
       return null;
     }
 
-    if (event?.type === "result" && event?.subtype !== "success") {
-      const classified = classifyToolError(
-        event.result || event.subtype || "Claude Code reported an error",
-      );
-      return classified.error === "DESIGNSYNC_ERROR"
-        ? failure("CLAUDE_ERROR", classified.detail)
-        : classified;
-    }
-    return null;
+    return resultEventError(event);
   };
 
   return {
