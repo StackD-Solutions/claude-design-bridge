@@ -8,11 +8,6 @@ All notable changes to Claude Design Bridge for Codex are documented here.
 
 - Claude Code session-limit handling now offers only wait-and-retry or abort.
 
-### Removed
-
-- The experimental browser ZIP fallback, importer tool, archive parser, provenance mode, and
-  related documentation and tests.
-
 ## 0.2.0 - 2026-07-13
 
 ### Added
