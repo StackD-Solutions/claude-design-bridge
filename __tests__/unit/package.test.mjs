@@ -102,6 +102,13 @@ test("should keep browser evidence separate from source provenance", () => {
   );
 });
 
+test("should require explicit approval for the browser ZIP fallback", () => {
+  assert.match(
+    skill,
+    /CLAUDE_SESSION_LIMIT[\s\S]*browser[\s\S]*ZIP fallback[\s\S]*explicit user approval[\s\S]*design_import_browser_export/,
+  );
+});
+
 test("should make optional visual verification reportable when skipped", () => {
   assert.match(
     skill,

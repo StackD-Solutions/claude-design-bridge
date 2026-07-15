@@ -17,6 +17,7 @@ test("should discover only unit and integration test modules", () => {
   assert.deepEqual(files, [
     "__tests__/integration/mcp-lifecycle.test.mjs",
     "__tests__/integration/mcp.test.mjs",
+    "__tests__/unit/browser-export.test.mjs",
     "__tests__/unit/claude-delegate.test.mjs",
     "__tests__/unit/design-bridge.test.mjs",
     "__tests__/unit/design-source.test.mjs",

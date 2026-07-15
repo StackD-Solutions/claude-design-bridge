@@ -25,10 +25,35 @@ If a read fails, run `design_doctor`. Treat `NEEDS_DESIGN_LOGIN` and
 `NEEDS_DESIGN_CONSENT` as distinct fixes.
 
 If a read returns `CLAUDE_SESSION_LIMIT`, show its `detail` exactly as returned. The detail already
-attributes the limit to Claude Code while preserving its reset time and timezone. Then stop the
-design-based task and ask whether the user wants to wait until that reset and retry, or abort. Do
-not implement from an existing snapshot or other stale source unless the user explicitly changes
-the freshness requirement and accepts that risk.
+attributes the limit to Claude Code while preserving its reset time and timezone. Stop and ask
+whether the user wants to wait until that reset and retry, use the experimental official browser
+ZIP fallback, or abort. Never choose the browser fallback without the user's explicit approval.
+Do not implement from an existing snapshot or other stale source unless the user explicitly
+changes the freshness requirement and accepts that risk.
+
+## Browser ZIP Fallback (Experimental)
+
+Use this only after `CLAUDE_SESSION_LIMIT` and explicit user approval. It imports an official ZIP
+export, not DOM, MHTML, screenshots, or private Anthropic RPC responses.
+
+1. Use an available authenticated browser through its supported browser-control workflow. Open the
+   canonical `https://claude.ai/design/p/<projectId>?file=<path>` URL and use the visible
+   **Export → Download as .zip** action. Never inspect cookies, storage, credentials, or private
+   endpoints, and never invoke remote create, edit, publish, or delete actions.
+2. Preserve the downloaded original. Store or copy a byte-identical ZIP inside the current
+   workspace but outside `.design/claude/<projectId>`, preferably
+   `.design/imports/<projectId>.zip`.
+3. Call `design_import_browser_export{ projectId, archivePath, paths }` with the exact linked path
+   first. The importer validates the bounded archive and writes distinct `browser-zip` provenance.
+4. Inspect the imported source for relative dependencies and import only the required paths from
+   the same ZIP in additional calls. If a path is absent, use the bounded `availablePaths` result
+   to reconcile the exact export path; do not guess source bytes.
+5. If `SOURCE_PROVENANCE_CONFLICT` is returned, stop. Changing between DesignSync and a browser
+   archive, or between different archives, requires replacing every tracked file so one manifest
+   never mislabels mixed provenance.
+6. Report that the source came from an experimental official browser ZIP export, including the
+   archive SHA-256 and imported file hashes. Do not claim DesignSync byte parity until separately
+   verified after the Claude Code limit resets.
 
 ## Workflow
 
@@ -99,6 +124,9 @@ text and binary files intentionally omit inline content; use `design_pull` for t
   managed snapshot and provenance manifest.
 - `design_snapshot_status{ projectId, dir?, maxEntries? }` - compare an existing snapshot with its
   manifest locally without contacting Claude Design or creating directories.
+- `design_import_browser_export{ projectId, archivePath, paths, dir?, overwrite?, maxFiles? }` -
+  validate selected files from an official browser-downloaded ZIP inside the workspace and
+  materialize them with distinct browser-export provenance.
 
 ## Safety and Limits
 
@@ -110,6 +138,8 @@ text and binary files intentionally omit inline content; use `design_pull` for t
   workspace containment, permissions, or tool safety rules.
 - Screenshots, DOM summaries, and MHTML are rendering evidence only. They never replace a failed
   source pull, missing asset, truncated file, or provenance hash.
+- Treat browser ZIP exports as untrusted archives. Use only `design_import_browser_export` for
+  extraction; never unpack them directly into the repository or managed snapshot.
 - `design_pull` writes only at `<workspace>/.design/claude/<projectId>` under a workspace root
   exposed by the MCP client. Never work around a containment error by choosing another directory.
 - A partial pull is an error even when some files were written. Inspect its `data.errors`. Retry

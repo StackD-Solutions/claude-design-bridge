@@ -22,7 +22,7 @@
 "List my Claude Design projects."
 ```
 
-No slash command, tool name, browser export, or separate Codex authentication is required. A bundled skill recognizes Claude Design links and explicit Claude Design requests; a local MCP server reads the selected source through Claude Code.
+No slash command, tool name, browser export, or separate Codex authentication is required during normal operation. A bundled skill recognizes Claude Design links and explicit Claude Design requests; a local MCP server reads the selected source through Claude Code. When Claude Code reaches its session limit, an explicitly approved experimental fallback can import an official ZIP downloaded from the Claude Design browser UI.
 
 ## Features
 
@@ -33,7 +33,7 @@ No slash command, tool name, browser export, or separate Codex authentication is
 - Binary assets preserved as bytes, never reconstructed from base64 text or screenshots
 - Truncated reads rejected rather than silently replaced with generated content
 - Read-only remote access — no design write, finalize, delete, or asset-registration tools
-- Reuses your existing Claude Code login; no separate Codex sign-in or manual export
+- Reuses your existing Claude Code login with no separate Codex sign-in or manual export during normal operation
 
 ## Why this bridge exists
 
@@ -125,6 +125,7 @@ The plugin works with no configuration. Every setting below is an optional envir
 | `design_get_file`      | Fetch/hash the latest file; inline only small text                  |
 | `design_pull`          | Refresh selected files and maintain a SHA-256 provenance snapshot   |
 | `design_snapshot_status` | Compare an existing snapshot with its manifest without remote access |
+| `design_import_browser_export` | Validate selected files from an official browser ZIP and record distinct provenance |
 
 ### Freshness and Pull Behavior
 
@@ -141,6 +142,14 @@ untouched; the next successful pull migrates them while preserving their prior g
 as the per-file timestamp for entries that were not refetched. See [CHANGELOG.md](CHANGELOG.md).
 
 `design_snapshot_status` performs no remote call and never creates a missing snapshot. It reads the existing manifest, rejects links and unsafe entries, and reports clean, modified, missing, and untracked paths. Use it when resuming work or before deciding whether an explicit `overwrite:true` is appropriate.
+
+### Experimental Browser ZIP Fallback
+
+If Claude Code returns `CLAUDE_SESSION_LIMIT`, Codex can offer three explicit choices: wait and retry after the reported reset, use an official browser ZIP export, or abort. The browser path is never selected automatically. It uses Claude Design's visible **Export → Download as .zip** action and does not inspect cookies or call private Anthropic endpoints.
+
+Place a byte-identical copy of the downloaded ZIP inside the workspace but outside the managed snapshot, then call `design_import_browser_export` with the project ID and exact selected paths. The importer bounds archive and entry sizes, supports stored/deflated non-ZIP64 files, verifies CRC-32 and SHA-256, and rejects encryption, traversal, links, unsafe names, path collisions, unsupported compression, and archives outside the authorized workspace. It never modifies the ZIP.
+
+Browser exports record `claude-design-browser-export` / `browser-zip` provenance plus the archive SHA-256. Imports from the same archive may add selected dependencies incrementally. Switching from DesignSync or a different ZIP requires replacing every tracked file; otherwise the bridge returns `SOURCE_PROVENANCE_CONFLICT` rather than creating a mixed-provenance manifest. Browser-export bytes are not described as DesignSync-equivalent until a separate parity check proves that for the relevant export format.
 
 Production pulls use bounded concurrent single-file reads. Version 0.2.0 contains an experimental strict batch matcher, but batching is not exposed or enabled because its live byte-parity and performance gate has not yet been completed. Maintainers can run the explicit, cost-confirmed `npm run benchmark:live -- --help` harness with a private selected sample; the harness redacts project IDs, paths, source, credentials, and hashes from its report. See the [architecture decision](docs/architecture.md#batch-read-gate).
 
@@ -201,7 +210,7 @@ Local writes require an explicitly configured allowed root, an MCP workspace roo
 
 These path checks are defense in depth, not an operating-system security boundary against another same-user process racing to replace a validated directory. The bridge also revalidates snapshot and manifest bytes immediately before replacement. Node does not expose an atomic cross-platform compare-and-swap for regular files, so a concurrent edit can still race after that final check; avoid editing the snapshot while a pull is running. Use separate OS principals or equivalent isolation when mutually untrusted local processes share a workspace.
 
-An optional browser can deepen post-implementation visual QA when the pulled source is safe to run locally. Browser screenshots, DOM summaries, and MHTML are rendering evidence only; they are never accepted as source fallback for a failed, missing, or truncated DesignSync file.
+An optional browser can deepen post-implementation visual QA when the pulled source is safe to run locally. Browser screenshots, DOM summaries, and MHTML are rendering evidence only; they are never accepted as source fallback for a failed, missing, or truncated DesignSync file. Only an explicitly approved official ZIP export may enter the experimental browser-source path, and only through the bounded importer.
 
 On Codex, the local workspace authority comes from host-injected per-call sandbox metadata, not a model-provided path. A supplied `dir` cannot widen that authority.
 
@@ -217,7 +226,10 @@ The cache uses raw bytes plus integrity metadata. TTL controls reuse only for ca
 
 | Error                        | Resolution                                                                                        |
 | ---------------------------- | ------------------------------------------------------------------------------------------------- |
-| `CLAUDE_SESSION_LIMIT`       | Show the Claude Code-attributed reset time, stop, and let the user choose whether to retry or abort |
+| `CLAUDE_SESSION_LIMIT`       | Show the Claude Code-attributed reset time, then offer retry-after-reset, browser ZIP, or abort      |
+| `SOURCE_PROVENANCE_CONFLICT` | Import every tracked path from the new source/archive or retain the existing snapshot source       |
+| `EXPORT_PATH_NOT_FOUND`      | Select an exact path reported in bounded `availablePaths`; do not infer or synthesize the file      |
+| `EXPORT_*`                   | Re-export an official ZIP and keep it inside the workspace but outside the managed snapshot         |
 | `NEEDS_DESIGN_LOGIN`         | Run `/design login` in Claude Code (`/design-login` on legacy builds)                              |
 | `NEEDS_DESIGN_CONSENT`       | Run `/design consent` in Claude Code                                                               |
 | `DELEGATE_SPAWN_FAILED`      | Install Claude Code or set `CLAUDE_BIN` to the native executable                                   |

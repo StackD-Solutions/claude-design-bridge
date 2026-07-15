@@ -28,13 +28,16 @@ Codex request
 ```
 
 A browser may be used after implementation for optional visual comparison. Browser DOM,
-MHTML, and screenshots are evidence about rendering, not substitutes for source bytes.
+MHTML, and screenshots are evidence about rendering, not substitutes for source bytes. After a
+Claude Code session-limit failure and explicit user approval, an official browser-downloaded ZIP
+may be imported through the bounded local archive validator with distinct provenance.
 
 ## Transport Decision
 
 | Transport | Role | Decision |
 | --- | --- | --- |
 | Claude Code CLI + DesignSync | Official authenticated source reads | Production backend |
+| Official browser ZIP export | Explicit session-limit fallback with archive/file hashes | Experimental source backend |
 | Browser DOM or MHTML | Rendered-state inspection | Never a source backend |
 | Browser private RPC | Fast direct access with private contracts and cookie trust | Excluded |
 | Official remote Design MCP | Potential first-party replacement transport | Gated on supported third-party auth and byte parity |
@@ -98,6 +101,12 @@ Manifest schema v2 records the source transport, manifest update time, and a sep
 `pulledAt` timestamp for each file. Selective pulls update freshness only for the files
 actually read successfully. Version 1 manifests are migrated in memory and are rewritten
 only after a successful pull.
+
+Browser ZIP manifests use source ID `claude-design-browser-export`, transport `browser-zip`, and
+the complete archive SHA-256. Selected paths from the same archive may be added incrementally.
+A transition from DesignSync or another archive must replace every tracked path; otherwise the
+bridge fails with `SOURCE_PROVENANCE_CONFLICT` before writing snapshot files. This keeps the
+single manifest-level source identity truthful without claiming unverified DesignSync parity.
 
 `design_snapshot_status` is local-only. It compares manifest hashes with bounded regular
 files in the existing snapshot, reports clean/modified/missing/untracked state, refuses

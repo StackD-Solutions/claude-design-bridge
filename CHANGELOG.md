@@ -2,6 +2,19 @@
 
 All notable changes to Claude Design Bridge for Codex are documented here.
 
+## Unreleased
+
+### Added
+
+- An explicitly approved experimental browser ZIP fallback for Claude Code session-limit failures.
+- Bounded ZIP validation with CRC-32/SHA-256 integrity, exact path selection, workspace
+  containment, and distinct `browser-zip` provenance.
+
+### Security
+
+- Browser ZIP imports reject traversal, links, encryption, ZIP64, unsupported compression,
+  unsafe/colliding paths, oversized archives/files, and mixed snapshot provenance.
+
 ## 0.2.0 - 2026-07-13
 
 ### Added
