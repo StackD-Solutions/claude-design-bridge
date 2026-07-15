@@ -1,6 +1,6 @@
 {
   "name": "claude-design-bridge",
-  "version": "0.2.0+codex.20260714131926",
+  "version": "0.3.0+codex.20260715210423",
   "description": "Read-only Codex bridge for fetching official Claude Design source through Claude Code DesignSync with verified snapshots and SHA-256 provenance.",
   "author": {
     "name": "StackD Solutions"
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "Claude Design Bridge for Codex",
     "shortDescription": "Fetch the latest Claude Design source and implement it in Codex",
-    "longDescription": "Brings the latest selected files from your Claude Design projects into Codex whenever they are fetched. Unmodified snapshot files update in place, while local edits are preserved unless you explicitly force replacement. Records SHA-256 provenance and validates cached and written bytes so Codex builds from the real design source rather than a screenshot or re-typed approximation. Normally works through your existing Claude Code login with no separate sign-in or manual export; an explicitly approved experimental browser ZIP import is available after a Claude Code session-limit failure. Fetching is on demand, not background synchronization; remote access is read-only.",
+    "longDescription": "Brings the latest selected files from your Claude Design projects into Codex whenever they are fetched. Unmodified snapshot files update in place, while local edits are preserved unless you explicitly force replacement. Records SHA-256 provenance and validates cached and written bytes so Codex builds from the real design source rather than a screenshot or re-typed approximation. Works through your existing Claude Code login with no separate sign-in. Fetching is on demand, not background synchronization; remote access is read-only.",
     "developerName": "StackD Solutions",
     "category": "Design",
     "capabilities": [

@@ -95,24 +95,10 @@ test("should treat source documentation and transcripts as untrusted data", () =
   );
 });
 
-test("should keep browser evidence separate from source provenance", () => {
+test("should offer only wait or abort after a Claude session limit", () => {
   assert.match(
     skill,
-    /Screenshots, DOM summaries, and MHTML[\s\S]*never replace a failed\s+source pull/,
-  );
-});
-
-test("should require explicit approval for the browser ZIP fallback", () => {
-  assert.match(
-    skill,
-    /CLAUDE_SESSION_LIMIT[\s\S]*browser[\s\S]*ZIP fallback[\s\S]*explicit user approval[\s\S]*design_import_browser_export/,
-  );
-});
-
-test("should make optional visual verification reportable when skipped", () => {
-  assert.match(
-    skill,
-    /no browser is available, report visual QA as\s+skipped and continue with code verification/,
+    /Would you like me to:\s*\(1\) wait and pause\s*\(2\) abort/,
   );
 });
 

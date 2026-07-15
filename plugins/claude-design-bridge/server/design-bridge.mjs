@@ -21,7 +21,6 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseBrowserExport } from "./browser-export.mjs";
 import { claudeCodeDesignSource } from "./design-source.mjs";
 import { isValidProjectId, normalizeDesignPath } from "./design-validation.mjs";
 
@@ -45,8 +44,6 @@ const SNAPSHOT_LOCK_NAME = ".claude-design.lock";
 const MAX_CACHE_METADATA_BYTES = 64 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_PULL_FILES = 12;
-const MAX_EXPORT_ARCHIVE_BYTES = 64 * 1024 * 1024;
-const MAX_EXPORT_ENTRIES = 4096;
 const MAX_STATUS_PATH_BYTES = 256 * 1024;
 const MAX_ACTIVE_INBOUND_REQUESTS = 64;
 const DESIGN_SOURCE = claudeCodeDesignSource;
@@ -1068,70 +1065,6 @@ const isWithin = (candidate, root) => {
   );
 };
 
-const resolveWorkspaceFile = async (filePath, sandboxRoot) => {
-  if (typeof filePath !== "string" || !path.isAbsolute(filePath)) {
-    return failure(
-      "BAD_EXPORT_PATH",
-      "archivePath must be an absolute file path inside the current workspace",
-    );
-  }
-  const roots = await getAuthorizedRoots(sandboxRoot);
-  if (!roots.length) {
-    return failure(
-      "WORKSPACE_ROOT_UNAVAILABLE",
-      "Codex did not provide sandbox metadata or an MCP root; configure DESIGN_BRIDGE_ALLOWED_ROOTS explicitly",
-    );
-  }
-  const lexicalPath = path.resolve(filePath);
-  const root = roots.find((candidate) => isWithin(lexicalPath, candidate));
-  if (!root) {
-    return failure(
-      "EXPORT_OUTSIDE_WORKSPACE",
-      "archivePath must stay inside a current MCP workspace root",
-    );
-  }
-  const segments = path.relative(root, lexicalPath).split(path.sep).filter(Boolean);
-  if (!segments.length) {
-    return failure(
-      "BAD_EXPORT_PATH",
-      "archivePath must identify a regular ZIP file inside the workspace root",
-    );
-  }
-  let current = root;
-  for (const [index, segment] of segments.entries()) {
-    const candidate = path.join(current, segment);
-    try {
-      const metadata = lstatSync(candidate);
-      const isFinal = index === segments.length - 1;
-      if (metadata.isSymbolicLink()) {
-        return failure(
-          "EXPORT_SYMLINK",
-          "archivePath must not traverse a symbolic link or junction",
-        );
-      }
-      if ((isFinal && !metadata.isFile()) || (!isFinal && !metadata.isDirectory())) {
-        return failure(
-          "BAD_EXPORT_PATH",
-          "archivePath must identify a regular ZIP file",
-        );
-      }
-      current = realpathSync(candidate);
-      if (!isWithin(current, root)) {
-        return failure(
-          "EXPORT_OUTSIDE_WORKSPACE",
-          "archivePath resolved outside the current workspace root",
-        );
-      }
-    } catch (error) {
-      return failure(
-        "BAD_EXPORT_PATH",
-        `Could not inspect archivePath: ${errorDetail(error)}`,
-      );
-    }
-  }
-  return ok({ archivePath: current, root });
-};
-
 const prepareDirectoryWithinRoot = (root, relativePath) => {
   const segments = relativePath.split(path.sep).filter(Boolean);
   let current = root;
@@ -1535,55 +1468,13 @@ const validManifestSource = (source) => {
     !source ||
     typeof source !== "object" ||
     Array.isArray(source) ||
-    typeof source.id !== "string" ||
-    !/^[a-z0-9][a-z0-9-]{0,63}$/.test(source.id) ||
-    typeof source.transport !== "string" ||
-    !/^[a-z0-9][a-z0-9-]{0,63}$/.test(source.transport) ||
-    source.readOnly !== true
+    source.id !== DESIGN_SOURCE_PROVENANCE.id ||
+    source.transport !== DESIGN_SOURCE_PROVENANCE.transport ||
+    source.readOnly !== DESIGN_SOURCE_PROVENANCE.readOnly
   ) {
     return false;
   }
-  if (source.id === "claude-design-browser-export") {
-    return (
-      source.transport === "browser-zip" &&
-      typeof source.archiveSha256 === "string" &&
-      /^[a-f0-9]{64}$/.test(source.archiveSha256)
-    );
-  }
-  return source.archiveSha256 === undefined;
-};
-
-const manifestSourcesMatch = (left, right) =>
-  left?.id === right.id &&
-  left?.transport === right.transport &&
-  left?.readOnly === right.readOnly &&
-  left?.archiveSha256 === right.archiveSha256;
-
-const validateSourceTransition = (
-  previousEntries,
-  previousSource,
-  entries,
-  source,
-) => {
-  if (!previousEntries.length) {
-    return ok(source);
-  }
-  const effectivePreviousSource = previousSource || DESIGN_SOURCE_PROVENANCE;
-  if (manifestSourcesMatch(effectivePreviousSource, source)) {
-    return ok(source);
-  }
-  const replacementKeys = new Set(
-    entries.map((entry) => canonicalDestinationKey(entry.path)),
-  );
-  const missingReplacement = previousEntries.find(
-    (entry) => !replacementKeys.has(canonicalDestinationKey(entry.path)),
-  );
-  return missingReplacement
-    ? failure(
-        "SOURCE_PROVENANCE_CONFLICT",
-        `Changing snapshot source requires replacing every tracked file; ${missingReplacement.path} was not selected`,
-      )
-    : ok(source);
+  return true;
 };
 
 const indexPaths = (paths) => {
@@ -1873,8 +1764,6 @@ const writeManifest = (
   previousEntries,
   previousFingerprint,
   entries,
-  previousSource,
-  source,
 ) => {
   const manifestPath = path.join(directory, MANIFEST_NAME);
   let currentFingerprint = null;
@@ -1896,15 +1785,6 @@ const writeManifest = (
       `${MANIFEST_NAME} changed while the design pull was running`,
     );
   }
-  const sourceTransition = validateSourceTransition(
-    previousEntries,
-    previousSource,
-    entries,
-    source,
-  );
-  if (!sourceTransition.ok) {
-    return sourceTransition;
-  }
   const allPaths = indexPaths(
     [...previousEntries, ...entries].map((entry) => entry.path),
   );
@@ -1925,7 +1805,7 @@ const writeManifest = (
     projectId,
     projectUrl: `https://claude.ai/design/p/${projectId}`,
     updatedAt: new Date().toISOString(),
-    source,
+    source: DESIGN_SOURCE_PROVENANCE,
     files: [...merged.values()].sort(compareDesignPaths),
   };
   const manifestBytes = `${JSON.stringify(manifest, null, 2)}\n`;
@@ -2487,8 +2367,6 @@ const performPull = async (args, signal, destination, selection) => {
         previousManifest.data.entries,
         previousManifest.data.fingerprint,
         manifestEntries,
-        previousManifest.data.source,
-        DESIGN_SOURCE_PROVENANCE,
       )
     : failure("MANIFEST_SKIPPED", "No files were written");
   if (!manifest.ok) {
@@ -2573,246 +2451,6 @@ const pull = async (args, signal, sandboxRoot) => {
   });
 };
 
-const validateBrowserImportArguments = (args) => {
-  if (typeof args?.archivePath !== "string" || !path.isAbsolute(args.archivePath)) {
-    return failure(
-      "BAD_EXPORT_PATH",
-      "archivePath must be an absolute file path inside the current workspace",
-    );
-  }
-  const selection = validatePullArguments({
-    maxFiles: args?.maxFiles,
-    overwrite: args?.overwrite,
-    paths: args?.paths,
-  });
-  if (!selection.ok) {
-    return selection;
-  }
-  return selection.data.requestedPaths === null
-    ? failure("BAD_PATHS", "paths is required for a browser export import")
-    : selection;
-};
-
-const performBrowserImport = async (
-  args,
-  signal,
-  destination,
-  selection,
-  archive,
-) => {
-  const previousManifest = readManifest(
-    destination.data.directory,
-    args.projectId,
-  );
-  if (!previousManifest.ok) {
-    return previousManifest;
-  }
-  const parsed = parseBrowserExport(archive, {
-    maxEntries: MAX_EXPORT_ENTRIES,
-    maxEntryBytes: MAX_FILE_BYTES,
-    maxTotalBytes: MAX_PULL_BYTES,
-    requestedPaths: selection.requestedPaths,
-  });
-  if (!parsed.ok) {
-    return parsed;
-  }
-  const source = {
-    id: "claude-design-browser-export",
-    transport: "browser-zip",
-    readOnly: true,
-    archiveSha256: parsed.data.archiveSha256,
-  };
-  const transition = validateSourceTransition(
-    previousManifest.data.entries,
-    previousManifest.data.source,
-    parsed.data.files,
-    source,
-  );
-  if (!transition.ok) {
-    return transition;
-  }
-  const importedAt = new Date().toISOString();
-  const previousEntriesByPath = new Map(
-    previousManifest.data.entries.map((entry) => [
-      canonicalDestinationKey(entry.path),
-      entry,
-    ]),
-  );
-  const results = [];
-  for (const file of parsed.data.files) {
-    const cancelled = cancellationFailure(signal);
-    if (cancelled) {
-      results.push({ path: file.path, result: cancelled });
-      continue;
-    }
-    const written = writeSnapshotFile(
-      destination.data.directory,
-      file.path,
-      file,
-      {
-        overwrite: selection.overwrite,
-        previousSha256: previousEntriesByPath.get(
-          canonicalDestinationKey(file.path),
-        )?.sha256,
-      },
-    );
-    results.push({
-      path: file.path,
-      result: written.ok
-        ? ok({
-            path: file.path,
-            localPath: written.data.localPath,
-            bytes: file.bytes.length,
-            sha256: file.sha256,
-            contentType: file.contentType,
-            binary: file.binary,
-            unchanged: written.data.unchanged,
-            updated: written.data.updated,
-            forced: written.data.forced,
-            pulledAt: importedAt,
-          })
-        : written,
-    });
-  }
-  const written = results
-    .filter((entry) => entry.result.ok)
-    .map((entry) => entry.result.data);
-  const errors = results
-    .filter((entry) => !entry.result.ok)
-    .map((entry) => ({
-      path: entry.path,
-      error: entry.result.error,
-      detail: entry.result.detail,
-    }));
-  const manifestEntries = written.map((entry) => ({
-    path: entry.path,
-    bytes: entry.bytes,
-    sha256: entry.sha256,
-    contentType: entry.contentType,
-    binary: entry.binary,
-    pulledAt: entry.pulledAt,
-  }));
-  const manifest = manifestEntries.length
-    ? writeManifest(
-        destination.data.directory,
-        args.projectId,
-        previousManifest.data.entries,
-        previousManifest.data.fingerprint,
-        manifestEntries,
-        previousManifest.data.source,
-        source,
-      )
-    : failure("MANIFEST_SKIPPED", "No browser-export files were written");
-  if (!manifest.ok) {
-    errors.push({
-      path: MANIFEST_NAME,
-      error: manifest.error,
-      detail: manifest.detail,
-    });
-  }
-  const data = {
-    projectId: args.projectId,
-    dir: destination.data.directory,
-    archiveSha256: parsed.data.archiveSha256,
-    availableCount: parsed.data.availableCount,
-    count: written.length,
-    source,
-    written,
-    errors,
-    ...(manifest.ok ? { manifestPath: manifest.data } : {}),
-  };
-  return errors.length
-    ? failure(
-        written.length ? "PARTIAL_IMPORT" : "IMPORT_FAILED",
-        "One or more browser-export files failed to import",
-        data,
-      )
-    : ok(data);
-};
-
-const importBrowserExport = async (args, signal, sandboxRoot) => {
-  const cancelled = cancellationFailure(signal);
-  if (cancelled) {
-    return cancelled;
-  }
-  const projectValidation = validateProjectId(args?.projectId);
-  if (!projectValidation.ok) {
-    return projectValidation;
-  }
-  const selection = validateBrowserImportArguments(args);
-  if (!selection.ok) {
-    return selection;
-  }
-  const archiveFile = await resolveWorkspaceFile(args.archivePath, sandboxRoot);
-  if (!archiveFile.ok) {
-    return archiveFile;
-  }
-  let archive;
-  try {
-    archive = readRegularFile(
-      archiveFile.data.archivePath,
-      MAX_EXPORT_ARCHIVE_BYTES,
-    );
-  } catch (error) {
-    return failure(
-      "EXPORT_READ_FAILED",
-      `Could not read browser export: ${errorDetail(error)}`,
-    );
-  }
-  const destination = await approveDestination(
-    args?.dir,
-    args.projectId,
-    sandboxRoot,
-    signal,
-  );
-  if (!destination.ok) {
-    return destination;
-  }
-  if (isWithin(archiveFile.data.archivePath, destination.data.directory)) {
-    return failure(
-      "EXPORT_IN_SNAPSHOT",
-      "Store the browser-export ZIP outside the managed snapshot directory",
-    );
-  }
-  const lockKey = canonicalDestinationKey(destination.data.directory);
-  return withPullLock(lockKey, async () => {
-    const queuedCancellation = cancellationFailure(signal);
-    if (queuedCancellation) {
-      return queuedCancellation;
-    }
-    const lock = acquireSnapshotLock(destination.data.directory);
-    if (!lock.ok) {
-      return lock;
-    }
-    let result;
-    let operationError;
-    try {
-      result = await performBrowserImport(
-        args,
-        signal,
-        destination,
-        selection.data,
-        archive,
-      );
-    } catch (error) {
-      operationError = error;
-    }
-    const released = releaseSnapshotLock(lock.data);
-    if (operationError) {
-      if (!released.ok) {
-        throw new AggregateError(
-          [operationError, new Error(released.detail)],
-          "Browser export import and lock release both failed",
-        );
-      }
-      throw operationError;
-    }
-    return released.ok
-      ? result
-      : failure(released.error, released.detail, { importResult: result });
-  });
-};
-
 const doctor = async (signal, sandboxRoot) => {
   const checks = [];
   const source = {
@@ -2833,7 +2471,7 @@ const doctor = async (signal, sandboxRoot) => {
       projects.error === "DELEGATE_SPAWN_FAILED"
         ? "Install Claude Code or set CLAUDE_BIN to its native executable."
         : projects.error === "CLAUDE_SESSION_LIMIT"
-          ? "Wait until the reported Claude session limit reset and retry, import an official browser-downloaded ZIP with design_import_browser_export, or abort. Do not continue from stale design source."
+          ? "Wait until the reported Claude session limit reset and retry, or abort. Do not continue from stale design source."
         : projects.error === "NEEDS_DESIGN_CONSENT"
           ? "Run /design consent in Claude Code."
           : projects.error === "NEEDS_DESIGN_LOGIN"
@@ -3056,56 +2694,6 @@ const TOOLS = [
     },
   },
   {
-    name: "design_import_browser_export",
-    title: "Import a Claude Design browser export",
-    description:
-      "Experimentally validate selected files from an official Claude Design ZIP downloaded into the workspace and safely materialize them with distinct browser-export provenance.",
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: false,
-      openWorldHint: false,
-    },
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectId: { type: "string" },
-        archivePath: {
-          type: "string",
-          description:
-            "Absolute path to an official Claude Design ZIP stored inside the current workspace but outside the managed snapshot",
-        },
-        dir: {
-          type: "string",
-          description:
-            "Optional exact <workspace>/.design/claude/<projectId> directory; derived from trusted Codex metadata when omitted",
-        },
-        paths: {
-          type: "array",
-          minItems: 1,
-          maxItems: MAX_PULL_FILES,
-          uniqueItems: true,
-          items: { type: "string" },
-          description:
-            "Exact project-relative files to import from the browser ZIP",
-        },
-        overwrite: {
-          type: "boolean",
-          description:
-            "Local-change policy. Omit or pass false to preserve local changes; true forces replacement.",
-        },
-        maxFiles: {
-          type: "integer",
-          minimum: 1,
-          maximum: MAX_PULL_FILES,
-          default: MAX_PULL_FILES,
-        },
-      },
-      required: ["projectId", "archivePath", "paths"],
-      additionalProperties: false,
-    },
-  },
-  {
     name: "design_doctor",
     title: "Diagnose Claude Design access",
     description:
@@ -3148,8 +2736,6 @@ const callTool = (name, args, signal, sandboxRoot) => {
       return pull(args, signal, sandboxRoot);
     case "design_snapshot_status":
       return snapshotStatus(args, signal, sandboxRoot);
-    case "design_import_browser_export":
-      return importBrowserExport(args, signal, sandboxRoot);
     case "design_doctor":
       return doctor(signal, sandboxRoot);
     default:

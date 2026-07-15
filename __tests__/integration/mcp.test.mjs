@@ -16,8 +16,6 @@ import { pathToFileURL } from "node:url";
 import { after, before, test } from "node:test";
 import { spawn } from "node:child_process";
 
-import { createZip } from "../fixtures/zip.mjs";
-
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 const serverPath = path.join(
   repositoryRoot,
@@ -192,7 +190,7 @@ after(() => {
   rmSync(workspaceRoot, { recursive: true, force: true });
 });
 
-test("should advertise only the nine intended bridge tools", async () => {
+test("should advertise only the eight intended bridge tools", async () => {
   const response = await rpc("tools/list");
 
   assert.deepEqual(
@@ -205,7 +203,6 @@ test("should advertise only the nine intended bridge tools", async () => {
       "design_get_file",
       "design_pull",
       "design_snapshot_status",
-      "design_import_browser_export",
       "design_doctor",
     ],
   );
@@ -267,12 +264,6 @@ test("should advertise accurate operation risk annotations", async () => {
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
-      openWorldHint: false,
-    },
-    design_import_browser_export: {
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: false,
       openWorldHint: false,
     },
     design_doctor: {
@@ -608,99 +599,6 @@ test("should write a provenance manifest", () => {
       perFileTimestamps: true,
     },
   );
-});
-
-test("should import selected files from one browser ZIP incrementally", async () => {
-  const projectId = "browser-import-1";
-  const archiveDirectory = path.join(workspaceRoot, ".design", "imports");
-  const archivePath = path.join(archiveDirectory, `${projectId}.zip`);
-  const directory = path.join(workspaceRoot, ".design", "claude", projectId);
-  mkdirSync(archiveDirectory, { recursive: true });
-  writeFileSync(
-    archivePath,
-    createZip([
-      { path: "Screen.dc.html", bytes: "<main>Browser export</main>" },
-      { path: "assets/icon.svg", bytes: "<svg></svg>" },
-    ]),
-  );
-
-  const first = await callTool("design_import_browser_export", {
-    projectId,
-    archivePath,
-    paths: ["Screen.dc.html"],
-  });
-  const second = await callTool("design_import_browser_export", {
-    projectId,
-    archivePath,
-    paths: ["assets/icon.svg"],
-  });
-  const manifest = JSON.parse(
-    readFileSync(path.join(directory, ".claude-design.json"), "utf8"),
-  );
-
-  assert.deepEqual(
-    {
-      firstError: first.isError,
-      secondError: second.isError,
-      html: readFileSync(path.join(directory, "Screen.dc.html"), "utf8"),
-      files: manifest.files.map((entry) => entry.path),
-      source: manifest.source,
-    },
-    {
-      firstError: false,
-      secondError: false,
-      html: "<main>Browser export</main>",
-      files: ["Screen.dc.html", "assets/icon.svg"],
-      source: {
-        id: "claude-design-browser-export",
-        transport: "browser-zip",
-        readOnly: true,
-        archiveSha256: first.data.archiveSha256,
-      },
-    },
-  );
-});
-
-test("should reject a partial source transition from DesignSync", async () => {
-  const archiveDirectory = path.join(workspaceRoot, ".design", "imports");
-  const archivePath = path.join(archiveDirectory, "partial-transition.zip");
-  writeFileSync(
-    archivePath,
-    createZip([
-      {
-        path: "components/button.html",
-        bytes: "<button>Browser version</button>",
-      },
-    ]),
-  );
-
-  const result = await callTool("design_import_browser_export", {
-    projectId: "mock-pid-1",
-    archivePath,
-    paths: ["components/button.html"],
-  });
-
-  assert.equal(result.data.error, "SOURCE_PROVENANCE_CONFLICT");
-});
-
-test("should reject a browser ZIP outside the workspace", async () => {
-  const outsideDirectory = mkdtempSync(path.join(os.tmpdir(), "design-export-outside-"));
-  const archivePath = path.join(outsideDirectory, "outside.zip");
-  writeFileSync(
-    archivePath,
-    createZip([{ path: "Screen.html", bytes: "outside" }]),
-  );
-  try {
-    const result = await callTool("design_import_browser_export", {
-      projectId: "browser-import-outside",
-      archivePath,
-      paths: ["Screen.html"],
-    });
-
-    assert.equal(result.data.error, "EXPORT_OUTSIDE_WORKSPACE");
-  } finally {
-    rmSync(outsideDirectory, { recursive: true, force: true });
-  }
 });
 
 test("should report a clean managed snapshot without remote access", async () => {
