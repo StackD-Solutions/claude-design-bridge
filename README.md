@@ -87,10 +87,23 @@ The canonical repository identifier is
 [`StackD-Solutions/claude-design-bridge`](https://github.com/StackD-Solutions/claude-design-bridge).
 
 ```powershell
+codex plugin marketplace add StackD-Solutions/claude-design-bridge
+codex plugin add claude-design-bridge@stackd-solutions
+codex plugin list
+```
+
+Pin a release with `--ref` when a fixed version is preferred:
+
+```powershell
+codex plugin marketplace add StackD-Solutions/claude-design-bridge --ref 0.5.0
+```
+
+To work on the plugin itself, clone it and add the local checkout instead:
+
+```powershell
 git clone https://github.com/StackD-Solutions/claude-design-bridge.git
 codex plugin marketplace add ./claude-design-bridge
 codex plugin add claude-design-bridge@stackd-solutions
-codex plugin list
 ```
 
 Start a new Codex task after installation. Then paste a design link or explicitly refer to a Claude Design project; no command is needed in the prompt.
