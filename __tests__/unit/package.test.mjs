@@ -102,6 +102,21 @@ test("should offer a local snapshot after a Claude session limit", () => {
   );
 });
 
+test("should stop design work when Claude Code is not installed", () => {
+  assert.match(skill, /`CLAUDE_CODE_NOT_INSTALLED`, stop\./);
+});
+
+test("should refuse to recreate a design without Claude Code", () => {
+  assert.match(
+    skill,
+    /never recreate the design from the link,\s+its name, a screenshot, or memory/,
+  );
+});
+
+test("should document Claude Code as a required prerequisite", () => {
+  assert.match(repositoryReadme, /Claude Code\]\(.+\) CLI is required/);
+});
+
 test("should keep package and plugin release versions aligned", () => {
   assert.equal(
     manifest.version.startsWith(`${repositoryPackage.version}+codex.`) ||

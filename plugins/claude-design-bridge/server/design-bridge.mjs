@@ -2536,6 +2536,28 @@ const pull = async (args, signal, sandboxRoot) => {
   });
 };
 
+const DOCTOR_GUIDANCE = new Map([
+  [
+    "CLAUDE_CODE_NOT_INSTALLED",
+    "Install Claude Code from https://claude.com/claude-code and run /design login, or set CLAUDE_BIN to an installed Claude Code executable.",
+  ],
+  [
+    "DELEGATE_SPAWN_FAILED",
+    "Claude Code was found but could not be started; repair the installation or set CLAUDE_BIN to a working executable.",
+  ],
+  [
+    "CLAUDE_SESSION_LIMIT",
+    "Wait until the reported reset, use a bounded local snapshot with explicit stale or unverified labeling, or abort.",
+  ],
+  ["NEEDS_DESIGN_CONSENT", "Run /design consent in Claude Code."],
+  [
+    "NEEDS_DESIGN_LOGIN",
+    "Run /design login in Claude Code (legacy builds: /design-login).",
+  ],
+]);
+const DEFAULT_DOCTOR_GUIDANCE =
+  "Check Claude Code login, design access, network policy, and the diagnostic detail.";
+
 const doctor = async (signal, sandboxRoot) => {
   const checks = [];
   const source = {
@@ -2553,15 +2575,7 @@ const doctor = async (signal, sandboxRoot) => {
       detail: `${projects.error}: ${projects.detail}`,
     });
     const guidance =
-      projects.error === "DELEGATE_SPAWN_FAILED"
-        ? "Install Claude Code or set CLAUDE_BIN to its native executable."
-        : projects.error === "CLAUDE_SESSION_LIMIT"
-          ? "Wait until the reported reset, use a bounded local snapshot with explicit stale or unverified labeling, or abort."
-        : projects.error === "NEEDS_DESIGN_CONSENT"
-          ? "Run /design consent in Claude Code."
-          : projects.error === "NEEDS_DESIGN_LOGIN"
-            ? "Run /design login in Claude Code (legacy builds: /design-login)."
-            : "Check Claude Code login, design access, network policy, and the diagnostic detail.";
+      DOCTOR_GUIDANCE.get(projects.error) ?? DEFAULT_DOCTOR_GUIDANCE;
     return failure(projects.error, projects.detail, {
       checks,
       guidance,

@@ -9,6 +9,8 @@ All notable changes to Claude Design Bridge for Codex are documented here.
 - Support for user-provided design files that have been manually extracted into the local snapshot
   directory. The bridge bounds and hashes these files and labels them as unverified local source
   without generating false DesignSync provenance.
+- A dedicated `CLAUDE_CODE_NOT_INSTALLED` failure for devices without a usable Claude Code, with
+  install guidance in the error detail, `design_doctor`, the skill, and the README.
 
 ### Changed
 
@@ -17,6 +19,11 @@ All notable changes to Claude Design Bridge for Codex are documented here.
   checked.
 - After remote access returns, selected unverified files can be verified or replaced through an
   explicit forced pull that restores DesignSync provenance.
+- A missing Claude Code is now a hard stop: the skill presents the install requirement and never
+  retries, substitutes a snapshot, or recreates the design.
+- An absolute `CLAUDE_BIN` that does not exist fails closed instead of silently falling back to
+  another Claude executable discovered on `PATH`.
+- `DELEGATE_SPAWN_FAILED` now covers only a Claude Code that was found but could not start.
 
 ## 0.3.0 - 2026-07-15
 

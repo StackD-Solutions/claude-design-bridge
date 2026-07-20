@@ -107,9 +107,9 @@ const createFakeChild = ({ closeDelayMs = 0 } = {}) => {
   return child;
 };
 
-const withNativeClaudePath = async (operation) => {
+const withClaudeBin = async (value, operation) => {
   const previous = process.env.CLAUDE_BIN;
-  process.env.CLAUDE_BIN = process.execPath;
+  process.env.CLAUDE_BIN = value;
   try {
     return await operation();
   } finally {
@@ -119,6 +119,15 @@ const withNativeClaudePath = async (operation) => {
       process.env.CLAUDE_BIN = previous;
     }
   }
+};
+
+const withNativeClaudePath = (operation) =>
+  withClaudeBin(process.execPath, operation);
+
+const missingClaudePath = `${process.execPath}-missing-claude-code`;
+
+const spawnRejectingWith = (code) => () => {
+  throw Object.assign(new Error(`spawn claude ${code}`), { code });
 };
 
 describe("sanitizeDiagnostic", () => {
@@ -687,6 +696,75 @@ test("should reject model values that could be parsed as CLI options", () => {
     },
     { status: 0, stderr: "", error: "BAD_DELEGATE_CONFIG" },
   );
+});
+
+describe("absent Claude Code", () => {
+  test("should stop before spawning when CLAUDE_BIN does not exist", async () => {
+    const result = await withClaudeBin(missingClaudePath, () =>
+      delegate(method, args),
+    );
+
+    assert.equal(result.error, "CLAUDE_CODE_NOT_INSTALLED");
+  });
+
+  test("should name the unusable CLAUDE_BIN value", async () => {
+    const result = await withClaudeBin(missingClaudePath, () =>
+      delegate(method, args),
+    );
+
+    assert.match(result.detail, /CLAUDE_BIN is set to /);
+  });
+
+  test("should tell the user where to install Claude Code", async () => {
+    const result = await withClaudeBin(missingClaudePath, () =>
+      delegate(method, args),
+    );
+
+    assert.match(result.detail, /https:\/\/claude\.com\/claude-code/);
+  });
+
+  test("should stop a batch read when Claude Code is absent", async () => {
+    const result = await withClaudeBin(missingClaudePath, () =>
+      delegateBatch(args.projectId, batchPaths),
+    );
+
+    assert.equal(result.error, "CLAUDE_CODE_NOT_INSTALLED");
+  });
+
+  test("should classify a spawn ENOENT as an absent installation", async () => {
+    const result = await withNativeClaudePath(() =>
+      delegate(method, args, { spawnProcess: spawnRejectingWith("ENOENT") }),
+    );
+
+    assert.equal(result.error, "CLAUDE_CODE_NOT_INSTALLED");
+  });
+
+  test("should classify a child ENOENT event as an absent installation", async () => {
+    const child = createFakeChild();
+    const spawnProcess = () => {
+      setImmediate(() => {
+        child.emit(
+          "error",
+          Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" }),
+        );
+      });
+      return child;
+    };
+
+    const result = await withNativeClaudePath(() =>
+      delegate(method, args, { spawnProcess }),
+    );
+
+    assert.equal(result.error, "CLAUDE_CODE_NOT_INSTALLED");
+  });
+
+  test("should keep other spawn failures distinct from an absent installation", async () => {
+    const result = await withNativeClaudePath(() =>
+      delegate(method, args, { spawnProcess: spawnRejectingWith("EACCES") }),
+    );
+
+    assert.equal(result.error, "DELEGATE_SPAWN_FAILED");
+  });
 });
 
 test("should run the isolated CLI with every safety flag", async () => {

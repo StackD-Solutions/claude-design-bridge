@@ -14,6 +14,16 @@ uses the user's authenticated Claude Code for design access, validates raw Desig
 materializes files inside the current workspace. No separate Codex login or special command is
 required.
 
+## Requirements
+
+Claude Code must be installed on this device. It owns design authentication and is the only supported
+path to Claude Design source, so the bridge cannot read any design without it.
+
+If a tool returns `CLAUDE_CODE_NOT_INSTALLED`, stop. Present the `detail` string verbatim as a block
+quote and state that Claude Design work cannot continue until Claude Code is installed. Do not retry
+the read, do not substitute a local snapshot on your own, and never recreate the design from the link,
+its name, a screenshot, or memory. Continue only after the user confirms Claude Code is installed.
+
 ## Authentication
 
 Claude Code owns both authentication gates:

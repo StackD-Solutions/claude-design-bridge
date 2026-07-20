@@ -24,6 +24,9 @@
 
 No slash command, tool name, or separate Codex authentication is required. A bundled skill recognizes Claude Design links and explicit Claude Design requests; a local MCP server reads the selected source through Claude Code.
 
+> [!IMPORTANT]
+> **The official [Claude Code](https://claude.com/claude-code) CLI is required on the same device.** The bridge has no design credentials or transport of its own — every read goes through your installed, logged-in Claude Code. Without it, design tools stop with `CLAUDE_CODE_NOT_INSTALLED` and no design source is fetched, recreated, or approximated.
+
 ## Features
 
 - Implicit activation from plain prompts — no slash command or tool name to remember
@@ -64,8 +67,10 @@ The bridge never scrapes Claude Code credential files, replays proprietary token
 
 - Codex with plugin support
 - Node.js 20 or newer
-- The official Claude Code CLI on the same machine
+- **The official [Claude Code](https://claude.com/claude-code) CLI on the same machine — required**
 - A logged-in Claude account with Claude Design access
+
+Install Claude Code first. The bridge fails closed with `CLAUDE_CODE_NOT_INSTALLED` whenever no Claude Code executable can be found, and reports it as a hard stop rather than falling back to a guessed or recreated design. When Claude Code is installed outside the discovered locations, set `CLAUDE_BIN` to its native executable (`claude.exe` on Windows).
 
 Run these once in interactive Claude Code:
 
@@ -96,7 +101,7 @@ The plugin works with no configuration. Every setting below is an optional envir
 
 | Variable                                 | Type     | Default                                                        | Description                                           |
 | ---------------------------------------- | -------- | -------------------------------------------------------------- | ----------------------------------------------------- |
-| `CLAUDE_BIN`                             | `string` | Native executable discovered beside the Claude PATH shim       | Exact Claude executable                               |
+| `CLAUDE_BIN`                             | `string` | Native executable discovered beside the Claude PATH shim       | Exact Claude executable; a missing absolute path fails closed |
 | `DESIGN_BRIDGE_MODEL`                    | `string` | `haiku`                                                        | Claude model used only to initiate the read tool call |
 | `DESIGN_BRIDGE_TIMEOUT_MS`               | `number` | `120000`                                                       | Maximum time for one delegated read                   |
 | `DESIGN_BRIDGE_MAX_BUDGET_USD`           | `number` | `0.25`                                                         | Claude print-call budget ceiling                      |
@@ -217,10 +222,11 @@ The cache uses raw bytes plus integrity metadata. TTL controls reuse only for ca
 
 | Error                        | Resolution                                                                                        |
 | ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| `CLAUDE_CODE_NOT_INSTALLED`  | Install Claude Code from <https://claude.com/claude-code>, or set `CLAUDE_BIN` to an installed executable |
 | `CLAUDE_SESSION_LIMIT`       | Show the reset time, then offer wait-and-retry, bounded local snapshot use, or abort                  |
 | `NEEDS_DESIGN_LOGIN`         | Run `/design login` in Claude Code (`/design-login` on legacy builds)                              |
 | `NEEDS_DESIGN_CONSENT`       | Run `/design consent` in Claude Code                                                               |
-| `DELEGATE_SPAWN_FAILED`      | Install Claude Code or set `CLAUDE_BIN` to the native executable                                   |
+| `DELEGATE_SPAWN_FAILED`      | Claude Code was found but could not start; repair the installation or fix `CLAUDE_BIN`             |
 | `DESIGNSYNC_UNAVAILABLE`     | Update/restart Claude Code and confirm the account has Design access                               |
 | `WORKSPACE_ROOT_UNAVAILABLE` | Restart after installing the current plugin; for unusual hosts, set `DESIGN_BRIDGE_ALLOWED_ROOTS`  |
 | `FILE_TRUNCATED`             | The legacy 256 KiB reader limit was reached; no partial file was written                          |

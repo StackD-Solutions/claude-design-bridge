@@ -136,6 +136,35 @@ const claudeSessionLimitFailure = (value) => {
   return failure("CLAUDE_SESSION_LIMIT", detail);
 };
 
+const CLAUDE_CODE_INSTALL_URL = "https://claude.com/claude-code";
+const NATIVE_EXECUTABLE_NAME =
+  process.platform === "win32" ? "claude.exe" : "claude";
+
+/**
+ * Build the hard-stop failure returned when the device has no usable Claude Code.
+ *
+ * Claude Code owns design authentication and is the only supported read path, so a missing
+ * installation is a prerequisite the user must resolve, not a transient delegate error.
+ *
+ * @param {string} cause Sanitized reason no Claude Code executable could be used.
+ * @returns {object} A structured CLAUDE_CODE_NOT_INSTALLED failure.
+ */
+const claudeCodeMissingFailure = (cause) =>
+  failure(
+    "CLAUDE_CODE_NOT_INSTALLED",
+    `Claude Code: ${cause}. This plugin reads Claude Design only through Claude Code, so install it from ${CLAUDE_CODE_INSTALL_URL} and run /design login, or set CLAUDE_BIN to an installed Claude Code executable (${NATIVE_EXECUTABLE_NAME}).`,
+  );
+
+const spawnFailure = (error) =>
+  error?.code === "ENOENT"
+    ? claudeCodeMissingFailure(
+        "the Claude Code executable could not be started because it does not exist",
+      )
+    : failure(
+        "DELEGATE_SPAWN_FAILED",
+        sanitizeDiagnostic(error?.message || error),
+      );
+
 const classifyToolError = (value) => {
   const message = sanitizeDiagnostic(value);
   if (/session limit|usage limit|rate limit/i.test(message)) {
@@ -277,15 +306,34 @@ const nativeClaudeCandidates = () => {
   return [...new Set(candidates)];
 };
 
+/**
+ * Resolve the Claude Code executable this device should run.
+ *
+ * An explicitly configured absolute CLAUDE_BIN must exist; the bridge fails closed instead of
+ * silently reading through a different Claude discovered on PATH.
+ *
+ * @returns {object} `{ok: true, data}` with the executable, or a CLAUDE_CODE_NOT_INSTALLED failure.
+ */
 const resolveClaudeExecutable = () => {
-  if (process.platform !== "win32") {
-    return process.env.CLAUDE_BIN || "claude";
+  const configured = process.env.CLAUDE_BIN;
+  if (configured && path.isAbsolute(configured)) {
+    return existsSync(configured)
+      ? { ok: true, data: configured }
+      : claudeCodeMissingFailure(
+          `CLAUDE_BIN is set to ${sanitizeDiagnostic(configured)}, which is not an existing executable`,
+        );
   }
-  return (
-    nativeClaudeCandidates().find(
-      (candidate) => path.isAbsolute(candidate) && existsSync(candidate),
-    ) ?? null
+  if (process.platform !== "win32") {
+    return { ok: true, data: configured || "claude" };
+  }
+  const native = nativeClaudeCandidates().find(
+    (candidate) => path.isAbsolute(candidate) && existsSync(candidate),
   );
+  return native
+    ? { ok: true, data: native }
+    : claudeCodeMissingFailure(
+        "no Claude Code executable was found on this device",
+      );
 };
 
 const childEnvironment = () => {
@@ -769,11 +817,8 @@ const runClaudeTurn = async (prompt, matcher, options = {}) => {
     );
   }
   const executable = resolveClaudeExecutable();
-  if (!executable) {
-    return failure(
-      "DELEGATE_SPAWN_FAILED",
-      "Could not locate the native Claude Code executable; set CLAUDE_BIN to claude.exe",
-    );
+  if (!executable.ok) {
+    return executable;
   }
 
   const cliArgs = [
@@ -967,7 +1012,7 @@ const runClaudeTurn = async (prompt, matcher, options = {}) => {
       };
 
       try {
-        child = spawnProcess(executable, cliArgs, {
+        child = spawnProcess(executable.data, cliArgs, {
           shell: false,
           cwd: workingDirectory,
           env: childEnvironment(),
@@ -975,13 +1020,7 @@ const runClaudeTurn = async (prompt, matcher, options = {}) => {
           stdio: ["ignore", "pipe", "pipe"],
         });
       } catch (error) {
-        finish(
-          failure(
-            "DELEGATE_SPAWN_FAILED",
-            sanitizeDiagnostic(error?.message || error),
-          ),
-          false,
-        );
+        finish(spawnFailure(error), false);
         return;
       }
 
@@ -1017,12 +1056,7 @@ const runClaudeTurn = async (prompt, matcher, options = {}) => {
       });
 
       child.on("error", (error) => {
-        finish(
-          failure(
-            "DELEGATE_SPAWN_FAILED",
-            sanitizeDiagnostic(error?.message || error),
-          ),
-        );
+        finish(spawnFailure(error));
       });
 
       child.on("close", (code, signal) => {
