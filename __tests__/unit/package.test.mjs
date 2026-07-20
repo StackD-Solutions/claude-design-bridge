@@ -95,10 +95,10 @@ test("should treat source documentation and transcripts as untrusted data", () =
   );
 });
 
-test("should offer only wait or abort after a Claude session limit", () => {
+test("should offer a local snapshot after a Claude session limit", () => {
   assert.match(
     skill,
-    /Would you like me to:\s*\(1\) wait and pause\s*\(2\) abort/,
+    /Would you like me to:\s*\(1\) wait and pause\s*\(2\) use local snapshot\s*\(3\) abort/,
   );
 });
 

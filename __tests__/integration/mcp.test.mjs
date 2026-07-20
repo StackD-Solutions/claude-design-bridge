@@ -725,7 +725,7 @@ test("should not create a missing snapshot during status inspection", async () =
   );
 });
 
-test("should reject a snapshot without a manifest", async () => {
+test("should reject an empty snapshot without a manifest", async () => {
   const projectId = "status-missing-manifest";
   const directory = path.join(
     workspaceRoot,
@@ -739,7 +739,7 @@ test("should reject a snapshot without a manifest", async () => {
     dir: directory,
   });
 
-  assert.equal(result.data.error, "MANIFEST_NOT_FOUND");
+  assert.equal(result.data.error, "SNAPSHOT_EMPTY");
 });
 
 test("should reject an invalid status manifest", async () => {

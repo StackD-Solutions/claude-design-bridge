@@ -2,6 +2,22 @@
 
 All notable changes to Claude Design Bridge for Codex are documented here.
 
+## 0.4.0 - 2026-07-16
+
+### Added
+
+- Support for user-provided design files that have been manually extracted into the local snapshot
+  directory. The bridge bounds and hashes these files and labels them as unverified local source
+  without generating false DesignSync provenance.
+
+### Changed
+
+- Claude Code session-limit handling now adds a use-local-snapshot option.
+- Managed local snapshots are reported as potentially stale when remote freshness cannot be
+  checked.
+- After remote access returns, selected unverified files can be verified or replaced through an
+  explicit forced pull that restores DesignSync provenance.
+
 ## 0.3.0 - 2026-07-15
 
 ### Changed

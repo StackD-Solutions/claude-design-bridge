@@ -52,6 +52,12 @@ const DESIGN_SOURCE_PROVENANCE = Object.freeze({
   transport: DESIGN_SOURCE.transport,
   readOnly: DESIGN_SOURCE.capabilities.write === false,
 });
+const USER_PROVIDED_LOCAL_SOURCE = Object.freeze({
+  id: "user-provided-local",
+  transport: "local-files",
+  readOnly: false,
+  verified: false,
+});
 
 const positiveNumber = (value, fallback) => {
   const parsed = Number(value);
@@ -2014,7 +2020,7 @@ const snapshotStatus = async (args, signal, sandboxRoot) => {
     return activeLock;
   }
   const manifest = readManifest(destination.data.directory, args.projectId, {
-    allowMissing: false,
+    allowMissing: true,
   });
   if (!manifest.ok) {
     return manifest;
@@ -2033,6 +2039,85 @@ const snapshotStatus = async (args, signal, sandboxRoot) => {
   );
   if (!inspected.ok) {
     return inspected;
+  }
+  if (manifest.data.fingerprint === null) {
+    if (!inspected.data.length) {
+      return failure(
+        "SNAPSHOT_EMPTY",
+        "The local snapshot contains no design files",
+      );
+    }
+    const files = [];
+    for (const [index, local] of inspected.data.entries()) {
+      if (index > 0 && index % 32 === 0) {
+        await yieldToEventLoop();
+        const cancelled = cancellationFailure(signal);
+        if (cancelled) {
+          return cancelled;
+        }
+      }
+      if (local.bytes > MAX_FILE_BYTES) {
+        files.push({
+          path: local.path,
+          status: "unverified",
+          actualSha256: null,
+          actualBytes: local.bytes,
+          detail: `Local file exceeds the ${MAX_FILE_BYTES}-byte status hash limit`,
+        });
+        continue;
+      }
+      let bytes;
+      try {
+        bytes = readRegularFile(local.absolutePath, MAX_FILE_BYTES);
+      } catch (error) {
+        return failure(
+          "SNAPSHOT_CHANGED",
+          `A local snapshot file changed during status inspection: ${errorDetail(error)}`,
+        );
+      }
+      files.push({
+        path: local.path,
+        status: "unverified",
+        actualSha256: sha256(bytes),
+        actualBytes: bytes.length,
+      });
+    }
+    const revalidatedManifest = readManifest(
+      destination.data.directory,
+      args.projectId,
+      { allowMissing: true },
+    );
+    if (
+      !revalidatedManifest.ok ||
+      revalidatedManifest.data.fingerprint !== null
+    ) {
+      return failure(
+        "MANIFEST_CHANGED",
+        `${MANIFEST_NAME} changed during status inspection`,
+      );
+    }
+    const endingLock = snapshotLockStatus(destination.data.directory);
+    if (endingLock) {
+      return endingLock;
+    }
+    return ok({
+      projectId: args.projectId,
+      dir: destination.data.directory,
+      state: "unverified",
+      manifestSchemaVersion: null,
+      updatedAt: null,
+      source: USER_PROVIDED_LOCAL_SOURCE,
+      summary: {
+        clean: 0,
+        modified: 0,
+        missing: 0,
+        untracked: files.length,
+      },
+      files,
+      untracked: files.map((entry) => entry.path),
+      warning:
+        "These user-provided local files have no bridge provenance and may be stale; remote Claude Design could not be checked",
+    });
   }
   const combinedPaths = indexPaths([
     ...manifest.data.entries.map((entry) => entry.path),
@@ -2471,7 +2556,7 @@ const doctor = async (signal, sandboxRoot) => {
       projects.error === "DELEGATE_SPAWN_FAILED"
         ? "Install Claude Code or set CLAUDE_BIN to its native executable."
         : projects.error === "CLAUDE_SESSION_LIMIT"
-          ? "Wait until the reported Claude session limit reset and retry, or abort. Do not continue from stale design source."
+          ? "Wait until the reported reset, use a bounded local snapshot with explicit stale or unverified labeling, or abort."
         : projects.error === "NEEDS_DESIGN_CONSENT"
           ? "Run /design consent in Claude Code."
           : projects.error === "NEEDS_DESIGN_LOGIN"
@@ -2664,7 +2749,7 @@ const TOOLS = [
     name: "design_snapshot_status",
     title: "Check Claude Design snapshot status",
     description:
-      "Compare an existing managed snapshot with its SHA-256 manifest without contacting Claude Design or creating directories.",
+      "Inspect an existing local snapshot without contacting Claude Design or creating directories. Managed files are compared with their SHA-256 manifest; manifest-free user-provided files are hashed and reported as unverified.",
     annotations: {
       readOnlyHint: true,
       destructiveHint: false,

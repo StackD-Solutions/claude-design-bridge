@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -809,6 +810,55 @@ test("should preserve differing untracked bytes when the manifest is missing", a
       fileError: "FILE_EXISTS",
       localContent: localEditContent,
       manifestExists: false,
+    },
+  );
+});
+
+test("should reconcile an unverified local snapshot with remote bytes", async (context) => {
+  const state = await startFreshnessHarness(context, "local-reconciliation");
+  mkdirSync(path.dirname(state.snapshotPath), { recursive: true });
+  writeFileSync(state.snapshotPath, localEditContent);
+  const status = await state.callTool("design_snapshot_status", {
+    projectId: state.projectId,
+  });
+  state.setRemoteContent(updatedDesignContent);
+
+  const reconciled = await state.pull({ overwrite: true });
+  const manifest = JSON.parse(readFileSync(state.manifestPath, "utf8"));
+
+  assert.deepEqual(
+    {
+      statusIsError: status.isError,
+      state: status.data.state,
+      source: status.data.source,
+      fileStatus: status.data.files?.[0]?.status,
+      localSha256: status.data.files?.[0]?.actualSha256,
+      reconciledIsError: reconciled.isError,
+      localContent: readFileSync(state.snapshotPath, "utf8"),
+      forced: reconciled.data.written?.[0]?.forced,
+      manifestSource: manifest.source,
+    },
+    {
+      statusIsError: false,
+      state: "unverified",
+      source: {
+        id: "user-provided-local",
+        transport: "local-files",
+        readOnly: false,
+        verified: false,
+      },
+      fileStatus: "unverified",
+      localSha256: createHash("sha256")
+        .update(localEditContent)
+        .digest("hex"),
+      reconciledIsError: false,
+      localContent: updatedDesignContent,
+      forced: true,
+      manifestSource: {
+        id: "claude-code-designsync",
+        transport: "claude-cli",
+        readOnly: true,
+      },
     },
   );
 });

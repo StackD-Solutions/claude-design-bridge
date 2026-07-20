@@ -95,8 +95,13 @@ actually read successfully. Version 1 manifests are migrated in memory and are r
 only after a successful pull.
 
 `design_snapshot_status` is local-only. It compares manifest hashes with bounded regular
-files in the existing snapshot, reports clean/modified/missing/untracked state, refuses
-links, and never creates a directory or contacts Claude Design.
+files in a managed snapshot and reports clean/modified/missing/untracked state. A non-empty
+manifest-free directory is reported separately as unverified `user-provided-local` source with
+local hashes; status never creates a provenance manifest or claims DesignSync origin. The bridge
+does not extract archives. After remote access returns, an explicitly forced pull of the selected
+unverified paths verifies matching bytes, replaces differing bytes, and writes DesignSync
+provenance only for the remotely fetched files. Status refuses links and never creates a directory
+or contacts Claude Design.
 
 ## Concurrency Model
 

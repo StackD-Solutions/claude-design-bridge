@@ -25,19 +25,37 @@ If a read fails, run `design_doctor`. Treat `NEEDS_DESIGN_LOGIN` and
 `NEEDS_DESIGN_CONSENT` as distinct fixes.
 
 If a read returns `CLAUDE_SESSION_LIMIT`, stop and present **exactly** this menu and nothing else —
-the `detail` string as a block quote, a blank line, then the two numbered choices:
+the `detail` string as a block quote, a blank line, then the three numbered choices:
 
 > _(the `CLAUDE_SESSION_LIMIT` detail, verbatim)_
 
 Would you like me to:
 (1) wait and pause
-(2) abort
+(2) use local snapshot
+(3) abort
 
 Render the `detail` verbatim; it attributes the limit to Claude Code and preserves the reset time and
 timezone. Do not add any other sentences around the menu — in particular, do not restate that no
-design files were stored and do not re-describe the options in prose. Do not implement from an
-existing snapshot or other stale source unless the user explicitly changes the freshness requirement
-and accepts that risk.
+design files were stored and do not re-describe the options in prose.
+
+If the user selects **use local snapshot**:
+
+1. Resolve the project ID from the Claude Design link without a remote read, then call
+   `design_snapshot_status{ projectId }`. The tool never creates or extracts files.
+2. If the status is `clean` or `dirty`, clearly state that Claude Design could not be checked and the
+   managed snapshot may be stale. Preserve and report every modified, missing, and untracked path;
+   never present those paths as refreshed source.
+3. If the status is `unverified`, the user manually supplied the extracted files. Clearly state that
+   they were not fetched from, compared with, or verified against Claude Design. Use the reported
+   local paths and hashes without creating a provenance manifest or implying DesignSync origin.
+4. If the snapshot is missing, empty, invalid, linked, unsafe, or over a bound, do not use it. Report
+   the status failure and offer only wait-and-pause or abort.
+5. When remote access becomes available, reconcile an `unverified` snapshot by calling
+   `design_pull` for the selected user-provided paths with `overwrite:true`. Matching bytes are
+   verified unchanged; differing bytes are replaced with DesignSync bytes; the resulting manifest
+   records only the remotely fetched DesignSync source. For an existing managed snapshot, retain the
+   normal local-edit protection and do not overwrite modified or untracked files without a separate
+   explicit request.
 
 ## Workflow
 
@@ -100,7 +118,9 @@ text and binary files intentionally omit inline content; use `design_pull` for t
 - `design_pull{ projectId, paths?, dir?, refresh?, overwrite?, maxFiles? }` - safely refresh the
   managed snapshot and provenance manifest.
 - `design_snapshot_status{ projectId, dir?, maxEntries? }` - compare an existing snapshot with its
-  manifest locally without contacting Claude Design or creating directories.
+  manifest locally, or hash manifest-free user-provided files as unverified, without contacting
+  Claude Design or creating directories.
+
 ## Safety and Limits
 
 - The bridge has no remote write tools. Never attempt DesignSync write, finalize, delete, or asset
@@ -120,4 +140,5 @@ text and binary files intentionally omit inline content; use `design_pull` for t
 - Pulling design source moves it into the local workspace and may put selected content into the
   Codex context. Tell the user where it was stored.
 - Snapshot status is bounded and read-only. Never create a directory, follow a link, or call a
-  remote source to make a missing/invalid snapshot look healthy.
+  remote source to make a missing/invalid snapshot look healthy. The bridge never extracts a ZIP;
+  users must place already extracted files in the exact local snapshot directory themselves.

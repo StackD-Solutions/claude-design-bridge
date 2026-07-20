@@ -124,7 +124,7 @@ The plugin works with no configuration. Every setting below is an optional envir
 | `design_list_files`    | List normalized project paths                                       |
 | `design_get_file`      | Fetch/hash the latest file; inline only small text                  |
 | `design_pull`          | Refresh selected files and maintain a SHA-256 provenance snapshot   |
-| `design_snapshot_status` | Compare an existing snapshot with its manifest without remote access |
+| `design_snapshot_status` | Inspect managed or user-provided local files without remote access    |
 
 ### Freshness and Pull Behavior
 
@@ -140,7 +140,9 @@ Upgrading from 0.1.x requires no manual snapshot conversion. Status checks leave
 untouched; the next successful pull migrates them while preserving their prior global `pulledAt`
 as the per-file timestamp for entries that were not refetched. See [CHANGELOG.md](CHANGELOG.md).
 
-`design_snapshot_status` performs no remote call and never creates a missing snapshot. It reads the existing manifest, rejects links and unsafe entries, and reports clean, modified, missing, and untracked paths. Use it when resuming work or before deciding whether an explicit `overwrite:true` is appropriate.
+`design_snapshot_status` performs no remote call and never creates or extracts files. With a manifest, it rejects links and unsafe entries and reports clean, modified, missing, and untracked paths. Without a manifest, an existing non-empty snapshot directory is reported as unverified `user-provided-local` source with bounded local hashes. Those files must never be described as fetched, current, or verified against Claude Design.
+
+After a Claude Code session limit, the user may explicitly choose **use local snapshot**. Managed files may be stale and retain their local-change protection. The bridge does not unzip downloads; a user who supplies a design manually must extract it into the exact `.design/claude/<projectId>` directory. When remote access returns, pull the selected unverified paths with `overwrite:true`: identical files are verified unchanged, differing files are replaced with DesignSync bytes, and only then is a DesignSync provenance manifest written. Invalid, empty, linked, unsafe, or oversized local snapshots remain fail-closed.
 
 Production pulls use bounded concurrent single-file reads. Version 0.2.0 contains an experimental strict batch matcher, but batching is not exposed or enabled because its live byte-parity and performance gate has not yet been completed. Maintainers can run the explicit, cost-confirmed `npm run benchmark:live -- --help` harness with a private selected sample; the harness redacts project IDs, paths, source, credentials, and hashes from its report. See the [architecture decision](docs/architecture.md#batch-read-gate).
 
@@ -215,7 +217,7 @@ The cache uses raw bytes plus integrity metadata. TTL controls reuse only for ca
 
 | Error                        | Resolution                                                                                        |
 | ---------------------------- | ------------------------------------------------------------------------------------------------- |
-| `CLAUDE_SESSION_LIMIT`       | Show the Claude Code-attributed reset time, then offer wait-and-retry or abort                       |
+| `CLAUDE_SESSION_LIMIT`       | Show the reset time, then offer wait-and-retry, bounded local snapshot use, or abort                  |
 | `NEEDS_DESIGN_LOGIN`         | Run `/design login` in Claude Code (`/design-login` on legacy builds)                              |
 | `NEEDS_DESIGN_CONSENT`       | Run `/design consent` in Claude Code                                                               |
 | `DELEGATE_SPAWN_FAILED`      | Install Claude Code or set `CLAUDE_BIN` to the native executable                                   |
@@ -225,7 +227,7 @@ The cache uses raw bytes plus integrity metadata. TTL controls reuse only for ca
 | `FILE_EXISTS`                | Local bytes differ from the latest design and are untracked or changed since the prior snapshot; inspect before `overwrite:true` |
 | `FILE_CHANGED`               | A local file changed during replacement; finish the local edit, then retry the design path        |
 | `MANIFEST_INVALID`           | Repair or remove an invalid `.claude-design.json` after reviewing the local snapshot              |
-| `MANIFEST_NOT_FOUND`         | Pull the selected design files before requesting local snapshot status                            |
+| `SNAPSHOT_EMPTY`             | Add already extracted local design files, wait for remote access, or abort                         |
 | `MANIFEST_VERSION_UNSUPPORTED` | Upgrade the bridge or migrate the manifest with a supported version                             |
 | `MANIFEST_TOO_LARGE`         | Split or clean the managed snapshot before adding more manifest entries                           |
 | `MANIFEST_CONFLICT`          | The snapshot manifest belongs to another project; move it or use the correct project directory    |
