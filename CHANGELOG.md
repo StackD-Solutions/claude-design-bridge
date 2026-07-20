@@ -2,6 +2,12 @@
 
 All notable changes to Claude Design Bridge for Codex are documented here.
 
+## 0.5.0 - 2026-07-20
+
+### Changed
+
+- Codex marketplace compliance.
+
 ## 0.4.0 - 2026-07-16
 
 ### Added
