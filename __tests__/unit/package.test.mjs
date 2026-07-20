@@ -11,7 +11,7 @@ const repositoryReadme = readFileSync(
 const repositoryPackage = JSON.parse(
   readFileSync(path.join(repositoryRoot, "package.json"), "utf8"),
 );
-const pluginRoot = path.join(repositoryRoot, "plugins", "claude-design-bridge");
+const pluginRoot = repositoryRoot;
 const serverRoot = path.join(pluginRoot, "server");
 const skillRoot = path.join(pluginRoot, "skills", "claude-design-bridge");
 const skill = readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");

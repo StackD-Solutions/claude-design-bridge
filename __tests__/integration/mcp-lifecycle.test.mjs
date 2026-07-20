@@ -17,7 +17,7 @@ import { test } from "node:test";
 
 const serverPath = path.resolve(
   import.meta.dirname,
-  "../../plugins/claude-design-bridge/server/design-bridge.mjs",
+  "../../server/design-bridge.mjs",
 );
 const fixturePath = path.resolve(
   import.meta.dirname,
@@ -25,7 +25,7 @@ const fixturePath = path.resolve(
 );
 const pluginManifestPath = path.resolve(
   import.meta.dirname,
-  "../../plugins/claude-design-bridge/.codex-plugin/plugin.json",
+  "../../.codex-plugin/plugin.json",
 );
 const sandboxMetaKey = "codex/sandbox-state-meta";
 const designPath = "components/button.html";

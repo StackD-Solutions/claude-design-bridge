@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
-    "check": "node --check plugins/claude-design-bridge/server/design-validation.mjs && node --check plugins/claude-design-bridge/server/claude-delegate.mjs && node --check plugins/claude-design-bridge/server/design-source.mjs && node --check plugins/claude-design-bridge/server/design-bridge.mjs && node --check scripts/benchmark-design-reads.mjs && node --check scripts/run-tests.mjs",
+    "check": "node --check server/design-validation.mjs && node --check server/claude-delegate.mjs && node --check server/design-source.mjs && node --check server/design-bridge.mjs && node --check scripts/benchmark-design-reads.mjs && node --check scripts/run-tests.mjs",
     "test": "node scripts/run-tests.mjs __tests__/unit __tests__/integration",
     "test:live": "node --test __tests__/live/*.test.mjs",
     "benchmark:live": "node scripts/benchmark-design-reads.mjs",

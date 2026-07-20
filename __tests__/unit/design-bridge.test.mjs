@@ -6,7 +6,7 @@ import {
   normalizeDesignPath,
   rawFileToBytes,
   resolveDesignLink,
-} from "../../plugins/claude-design-bridge/server/design-bridge.mjs";
+} from "../../server/design-bridge.mjs";
 
 test("should normalize a project-relative design path", () => {
   assert.equal(

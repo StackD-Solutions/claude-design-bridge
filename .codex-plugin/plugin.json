@@ -22,6 +22,7 @@
     "shortDescription": "Fetch the latest Claude Design source and implement it in Codex",
     "longDescription": "Brings the latest selected files from your Claude Design projects into Codex whenever they are fetched. Unmodified snapshot files update in place, while local edits are preserved unless you explicitly force replacement. Records SHA-256 provenance and validates cached and written bytes so Codex builds from the real design source rather than a screenshot or re-typed approximation. Works through your existing Claude Code login with no separate sign-in. Fetching is on demand, not background synchronization; remote access is read-only.",
     "developerName": "StackD Solutions",
+    "brandColor": "#AFFF33",
     "category": "Design",
     "capabilities": [
       "Read",
@@ -31,6 +32,7 @@
       "Fetch this Claude Design link and implement the linked screen.",
       "Apply the named Claude Design component to this project.",
       "List my Claude Design projects."
-    ]
+    ],
+    "composerIcon": "./assets/icon.svg"
   }
 }

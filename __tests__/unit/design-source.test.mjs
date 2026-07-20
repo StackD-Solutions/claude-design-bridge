@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { createClaudeCodeDesignSource } from "../../plugins/claude-design-bridge/server/design-source.mjs";
+import { createClaudeCodeDesignSource } from "../../server/design-source.mjs";
 
 const success = Object.freeze({ ok: true, data: Object.freeze({ value: 1 }) });
 

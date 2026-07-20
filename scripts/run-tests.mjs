@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 StackD Solutions
 
-import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import path from "node:path";
+import { run as runTestFiles } from "node:test";
+import { spec } from "node:test/reporters";
 import { fileURLToPath } from "node:url";
 
 const TEST_FILE_PATTERN = /\.test\.mjs$/;
@@ -43,20 +44,11 @@ const run = () => {
   if (!files.length) {
     throw new Error(`No test modules were found under: ${roots.join(", ")}`);
   }
-  const child = spawnSync(process.execPath, ["--test", ...files], {
-    stdio: "inherit",
+  const stream = runTestFiles({ files });
+  stream.on("test:fail", () => {
+    process.exitCode = 1;
   });
-  if (child.error) {
-    throw new Error("Could not start the Node test process", {
-      cause: child.error,
-    });
-  }
-  if (child.status === null) {
-    throw new Error(
-      `Node test process ended without an exit status (signal=${String(child.signal)})`,
-    );
-  }
-  process.exitCode = child.status;
+  stream.compose(new spec()).pipe(process.stdout);
 };
 
 const isMainModule =

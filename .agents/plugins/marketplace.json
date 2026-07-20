@@ -8,7 +8,7 @@
       "name": "claude-design-bridge",
       "source": {
         "source": "local",
-        "path": "./plugins/claude-design-bridge"
+        "path": "."
       },
       "policy": {
         "installation": "AVAILABLE",

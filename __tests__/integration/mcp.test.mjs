@@ -17,13 +17,7 @@ import { after, before, test } from "node:test";
 import { spawn } from "node:child_process";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
-const serverPath = path.join(
-  repositoryRoot,
-  "plugins",
-  "claude-design-bridge",
-  "server",
-  "design-bridge.mjs",
-);
+const serverPath = path.join(repositoryRoot, "server", "design-bridge.mjs");
 const fixturePath = path.join(
   repositoryRoot,
   "__tests__",

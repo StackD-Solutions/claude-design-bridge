@@ -11,7 +11,7 @@ const expectedBytes = Number(process.env.DESIGN_BRIDGE_LIVE_BYTES);
 const expectedSha256 = process.env.DESIGN_BRIDGE_LIVE_SHA256;
 const serverPath = path.resolve(
   import.meta.dirname,
-  "../../plugins/claude-design-bridge/server/design-bridge.mjs",
+  "../../server/design-bridge.mjs",
 );
 
 test(

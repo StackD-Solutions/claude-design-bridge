@@ -264,14 +264,14 @@ Validate the plugin manifest:
 
 ```powershell
 python "$env:USERPROFILE/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py" `
-  ./plugins/claude-design-bridge
+  .
 ```
 
 After changing an installed local plugin, update its cachebuster and reinstall it:
 
 ```powershell
 python "$env:USERPROFILE/.codex/skills/.system/plugin-creator/scripts/update_plugin_cachebuster.py" `
-  ./plugins/claude-design-bridge
+  .
 codex plugin add claude-design-bridge@stackd-solutions
 ```
 
@@ -280,15 +280,14 @@ Use a fresh Codex task after reinstalling so it loads the new skill and MCP proc
 ## Layout
 
 ```text
+.codex-plugin/plugin.json
+.mcp.json
 .agents/plugins/marketplace.json
-plugins/claude-design-bridge/
-  .codex-plugin/plugin.json
-  .mcp.json
-  skills/claude-design-bridge/SKILL.md
-  server/claude-delegate.mjs
-  server/design-bridge.mjs
-  server/design-source.mjs
-  server/design-validation.mjs
+skills/claude-design-bridge/SKILL.md
+server/claude-delegate.mjs
+server/design-bridge.mjs
+server/design-source.mjs
+server/design-validation.mjs
 docs/
   architecture.md
 __tests__/

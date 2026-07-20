@@ -7,12 +7,12 @@ import { performance } from "node:perf_hooks";
 import {
   delegate,
   delegateBatch,
-} from "../plugins/claude-design-bridge/server/claude-delegate.mjs";
+} from "../server/claude-delegate.mjs";
 import {
   rawFileToBytes,
   resolveDesignLink,
-} from "../plugins/claude-design-bridge/server/design-bridge.mjs";
-import { normalizeDesignPath } from "../plugins/claude-design-bridge/server/design-validation.mjs";
+} from "../server/design-bridge.mjs";
+import { normalizeDesignPath } from "../server/design-validation.mjs";
 
 const BATCH_SIZES = [1, 3, 12];
 const REQUIRED_CONFIRMATION = "I_ACCEPT_BOUNDED_COST";

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { PassThrough } from "node:stream";
@@ -11,7 +10,7 @@ import {
   delegate,
   delegateBatch,
   sanitizeDiagnostic,
-} from "../../plugins/claude-design-bridge/server/claude-delegate.mjs";
+} from "../../server/claude-delegate.mjs";
 
 const method = "get_file";
 const args = { projectId: "project-1", path: "Screen.dc.html" };
@@ -670,32 +669,25 @@ test("should honor batch cancellation before spawning Claude", async () => {
   assert.equal(result.error, "CANCELLED");
 });
 
-test("should reject model values that could be parsed as CLI options", () => {
-  const moduleUrl = new URL(
-    "../../plugins/claude-design-bridge/server/claude-delegate.mjs",
-    import.meta.url,
-  ).href;
-  const script = `import { delegate } from ${JSON.stringify(moduleUrl)}; process.stdout.write(JSON.stringify(await delegate("list_projects")));`;
-  const child = spawnSync(
-    process.execPath,
-    ["--input-type=module", "--eval", script],
-    {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        DESIGN_BRIDGE_MODEL: "--dangerously-skip-permissions",
-      },
-    },
-  );
+test("should reject model values that could be parsed as CLI options", async () => {
+  const previous = process.env.DESIGN_BRIDGE_MODEL;
+  process.env.DESIGN_BRIDGE_MODEL = "--dangerously-skip-permissions";
+  try {
+    const isolated = await import(
+      "../../server/claude-delegate.mjs?model-guard"
+    );
 
-  assert.deepEqual(
-    {
-      status: child.status,
-      stderr: child.stderr,
-      error: JSON.parse(child.stdout).error,
-    },
-    { status: 0, stderr: "", error: "BAD_DELEGATE_CONFIG" },
-  );
+    assert.equal(
+      (await isolated.delegate("list_projects")).error,
+      "BAD_DELEGATE_CONFIG",
+    );
+  } finally {
+    if (previous === undefined) {
+      delete process.env.DESIGN_BRIDGE_MODEL;
+    } else {
+      process.env.DESIGN_BRIDGE_MODEL = previous;
+    }
+  }
 });
 
 describe("absent Claude Code", () => {
